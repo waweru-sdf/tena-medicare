@@ -40,7 +40,7 @@ JITSI_APP_ID = os.getenv("JITSI_APP_ID", "")
 JITSI_APP_SECRET = os.getenv("JITSI_APP_SECRET", "")
 APP_URL = os.getenv("APP_URL", "http://localhost:5000").rstrip("/")
 # Where Chapa sends the patient back to. Locally that is the Vite site, in production the same host as the API.
-RETURN_BASE = (APP_URL if IS_PROD else os.getenv("FRONTEND_ORIGIN", "http://localhost:5173")).rstrip("/")
+RETURN_BASE = (os.getenv("FRONTEND_ORIGIN") or (APP_URL if IS_PROD else "http://localhost:5173")).rstrip("/")
 # Field-level encryption at rest for clinical text. Losing DATA_KEY means losing that data: back it up.
 fernet = Fernet(os.getenv("DATA_KEY") or base64.urlsafe_b64encode(hashlib.sha256(app.config["SECRET_KEY"].encode()).digest()))
 class Enc(db.TypeDecorator):
