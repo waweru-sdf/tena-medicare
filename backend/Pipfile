@@ -1,0 +1,21 @@
+[[source]]
+url = "https://pypi.org/simple"
+verify_ssl = true
+name = "pypi"
+
+[packages]
+flask = "<4,>=3.0"
+flask-cors = "<6,>=4.0"
+flask-sqlalchemy = "<4,>=3.1"
+pyjwt = "<3,>=2.8"
+requests = "<3,>=2.31"
+pyotp = "<3,>=2.9"
+cryptography = "<47,>=42"
+python-dotenv = "<2,>=1.0"
+gunicorn = "<24,>=21"
+pytest = "<9,>=8"
+
+[dev-packages]
+
+[requires]
+python_version = "3.8"

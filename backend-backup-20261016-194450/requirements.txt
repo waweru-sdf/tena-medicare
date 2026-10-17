@@ -1,0 +1,10 @@
+Flask>=3.0,<4
+Flask-Cors>=4.0,<6
+Flask-SQLAlchemy>=3.1,<4
+PyJWT>=2.8,<3
+requests>=2.31,<3
+pyotp>=2.9,<3
+cryptography>=42,<47
+python-dotenv>=1.0,<2
+gunicorn>=21,<24
+pytest>=8,<9

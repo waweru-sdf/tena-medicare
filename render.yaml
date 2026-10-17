@@ -1,0 +1,52 @@
+services:
+  - type: web
+    name: telemedicine-ethiopia
+    runtime: python
+    buildCommand: pip install -r backend/requirements.txt && cd frontend && npm install && npm run build
+    startCommand: cd backend && gunicorn app:app --workers 1 --bind 0.0.0.0:$PORT
+    envVars:
+      - key: PRODUCTION
+        value: "1"
+      - key: SECRET_KEY
+        generateValue: true
+      - key: CHAPA_SECRET_KEY
+        sync: false
+      - key: CHAPA_WEBHOOK_SECRET
+        sync: false
+      - key: APP_URL
+        sync: false
+      - key: DATA_KEY
+        sync: false
+      - key: AI_PROVIDER
+        value: "openai"
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: ANTHROPIC_WORKSPACE_ID
+        sync: false
+      - key: AI_DAILY_CAP
+        value: "1000"
+      - key: JITSI_KID
+        sync: false
+      - key: JITSI_PRIVATE_KEY
+        sync: false
+      - key: JITSI_DOMAIN
+        sync: false
+      - key: JITSI_APP_ID
+        sync: false
+      - key: JITSI_APP_SECRET
+        sync: false
+      - key: ADMIN_EMAIL
+        sync: false
+      - key: ADMIN_PASSWORD
+        sync: false
+      - key: SEED_DEMO
+        value: "0"
+      - key: ENABLE_DEV_PAYMENTS
+        value: "0"
+      - key: DATABASE_URL
+        fromDatabase: { name: telemed-db, property: connectionString }
+databases:
+  - name: telemed-db
+    plan: free
