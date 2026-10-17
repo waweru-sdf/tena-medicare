@@ -2,7 +2,7 @@ services:
   - type: web
     name: telemedicine-ethiopia
     runtime: python
-    buildCommand: pip install -r backend/requirements.txt && cd frontend && npm install && npm run build
+    buildCommand: pip install -r backend/requirements.txt && cd frontend && npm ci && npm run build
     startCommand: cd backend && gunicorn app:app --workers 1 --bind 0.0.0.0:$PORT
     healthCheckPath: /api/health
     envVars:
