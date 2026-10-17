@@ -21,6 +21,7 @@ db_url = os.getenv("DATABASE_URL", "sqlite:///telemed.db")
 if db_url.startswith("postgres://"):  # some hosts still use the old prefix
     db_url = db_url.replace("postgres://", "postgresql://", 1)
 app.config["SQLALCHEMY_DATABASE_URI"] = db_url
+app.config["SQLALCHEMY_ENGINE_OPTIONS"] = {"pool_pre_ping": True, "pool_recycle": 280}
 # CORS is only needed when the Vite dev server (port 5173) calls the API in development.
 CORS(app, origins=[os.getenv("FRONTEND_ORIGIN", "http://localhost:5173")])
 DIST = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "frontend", "dist"))
@@ -862,8 +863,11 @@ def mfa_enable():
 EMERGENCY = re.compile(r"የደረት (ህመም|ሕመም)|መተንፈስ አልቻ|ራሴን (ማጥፋት|ለማጥፋት)|chest pain|can'?t breathe|cannot breathe|difficulty breathing|bleeding heavily|unconscious|suicid|overdose|stroke|seizure", re.I)
 def ai_model():
     m = os.getenv("AI_MODEL", "").strip()
-    if AI_PROVIDER == "openai": return m if m and not m.lower().startswith("claude") else "gpt-4o-mini"
-    return m if m and not m.lower().startswith(("gpt", "o1", "o3", "o4")) else "claude-sonnet-4-6"
+    if AI_PROVIDER == "gemini":
+        m = m[len("models/"):] if m.startswith("models/") else m
+        return m if m and not m.lower().startswith(("gpt", "claude", "o1", "o3", "o4")) else "gemini-3.8-flash"
+    if AI_PROVIDER == "openai": return m if m and not m.lower().startswith(("claude", "gemini")) else "gpt-4o-mini"
+    return m if m and not m.lower().startswith(("gpt", "gemini", "o1", "o3", "o4")) else "claude-sonnet-4-6"
 
 def clean_history(h):
     """Keep the last few turns, strictly alternating and starting with the user (both providers need that)."""
@@ -918,9 +922,30 @@ def _ai_call(system, user, max_tokens=700, history=None):
                 headers={"Authorization": "Bearer " + key, "Content-Type": "application/json"}, json={**body, limit_key: max_tokens})
             if r.status_code != 400: break
         provider_error(r, "OpenAI"); return r.json()["choices"][0]["message"]["content"] or ""
-    raise RuntimeError("AI_PROVIDER must be openai or anthropic")
+    if AI_PROVIDER == "gemini":
+        key = os.getenv("GEMINI_API_KEY")
+        if not key: raise RuntimeError("Gemini AI not configured")
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{ai_model()}:generateContent"
+        body = {"systemInstruction": {"parts": [{"text": system}]},
+                "contents": [{"role": "model" if m["role"] == "assistant" else "user", "parts": [{"text": m["content"]}]} for m in msgs],
+                "generationConfig": {"maxOutputTokens": max(max_tokens * 3, 1024)}}   # Gemini 3 "thinking" uses the same budget as the answer
+        for attempt in (1, 2):   # one retry on a timeout or a busy server
+            try:
+                r = requests.post(url, timeout=(10, 90), json=body, headers={"x-goog-api-key": key, "Content-Type": "application/json"})
+                if r.status_code in (429, 500, 502, 503, 504) and attempt == 1: time.sleep(2); continue
+                break
+            except (requests.Timeout, requests.ConnectionError):
+                if attempt == 2: raise
+                time.sleep(2)
+        provider_error(r, "Gemini"); data = r.json(); cand = (data.get("candidates") or [None])[0]
+        if not cand: raise RuntimeError("Gemini returned no answer: " + str((data.get("promptFeedback") or {}).get("blockReason", "unknown")))
+        if cand.get("finishReason") == "MAX_TOKENS": raise RuntimeError("Gemini output was cut off")   # never pass a truncated draft to a clinician
+        text = "".join(x.get("text", "") for x in (cand.get("content") or {}).get("parts", []) if not x.get("thought")).strip()
+        if not text: raise RuntimeError("Gemini returned no text (" + str(cand.get("finishReason")) + ")")
+        return text
+    raise RuntimeError("AI_PROVIDER must be openai, anthropic or gemini")
 
-def ai_configured(): return bool(os.getenv("OPENAI_API_KEY" if AI_PROVIDER == "openai" else "ANTHROPIC_API_KEY"))
+def ai_configured(): return bool(os.getenv({"openai": "OPENAI_API_KEY", "gemini": "GEMINI_API_KEY"}.get(AI_PROVIDER, "ANTHROPIC_API_KEY")))
 
 @app.get("/api/ai/status")
 def ai_status():
