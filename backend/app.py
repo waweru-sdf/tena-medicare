@@ -1355,11 +1355,11 @@ def _ai_call(system, user, max_tokens=700, history=None):
         if not key: raise RuntimeError("Gemini AI not configured")
         contents = [{"role": "model" if m["role"] == "assistant" else "user", "parts": [{"text": m["content"]}]} for m in msgs]
         # Google answers 503/429 when a model is busy. Try your model, retry once, then fall back to steadier models.
-        chain = [ai_model()] + [x.strip() for x in os.getenv("GEMINI_FALLBACKS", "gemini-2.5-flash,gemini-2.5-flash-lite").split(",") if x.strip()]
+        chain = [ai_model()] + [x.strip() for x in os.getenv("GEMINI_FALLBACKS", "gemini-3.8-flash,gemini-3.8-flash-lite").split(",") if x.strip()]
         chain = list(dict.fromkeys(chain)); last = None
         for i, model in enumerate(chain):
             cfg_ = {"maxOutputTokens": max_tokens}
-            if "2.5-flash" in model: cfg_["thinkingConfig"] = {"thinkingBudget": 0}   # otherwise hidden thinking eats the answer budget
+            if "3.8-flash" in model: cfg_["thinkingConfig"] = {"thinkingBudget": 0}   # otherwise hidden thinking eats the answer budget
             for attempt in range(2 if i == 0 else 1):
                 r = requests.post(f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent", timeout=30,
                     headers={"x-goog-api-key": key, "Content-Type": "application/json"},
