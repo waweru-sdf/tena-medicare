@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Sparkles, Send, X, MessageCircle, Check, RefreshCw } from 'lucide-react';
-import { request, money, dateTime } from './lib.js';
+import { Sparkles, Send, X, MessageCircle, Check, RefreshCw, ArrowRight } from 'lucide-react';
+import { request, money, dateTime, publicUrl } from './lib.js';
+import { Avatar, Modal } from './ui.jsx';
 
 const useLoad = (path, deps = []) => {
   const [data, setData] = useState(null);
@@ -11,32 +12,32 @@ const useLoad = (path, deps = []) => {
 const Status = ({ s }) => <span className={`status ${['resolved', 'paid', 'approved', 'refunded'].includes(s) ? 'green' : ['rejected', 'failed'].includes(s) ? 'red' : 'amber'}`}>{String(s).replaceAll('_', ' ')}</span>;
 
 /* ---------- Chatbot (OpenAI or Anthropic, chosen on the server) ---------- */
-const WELCOME = 'Hello! I can help with booking, payments, preparing for a video visit and using this platform. I cannot give medical advice. / ሰላም! ስለ ቀጠሮ፣ ክፍያ እና አጠቃቀም መርዳት እችላለሁ።';
-export function ChatPanel({ onClose }) {
+const WELCOME = 'Hello! I am the Tena Medicare skin-care assistant. I can share general skin-care tips, help you choose a doctor and plan, and explain booking and payment. I cannot diagnose or prescribe. / ሰላም! ስለ ቆዳ እንክብካቤ አጠቃላይ መረጃ እና ዶክተር ለመምረጥ መርዳት እችላለሁ።';
+export function ChatPanel({ onClose, onDoctor }) {
   const [msgs, setMsgs] = useState(() => { try { return JSON.parse(sessionStorage.getItem('tena_chat')) || [{ role: 'assistant', text: WELCOME }]; } catch { return [{ role: 'assistant', text: WELCOME }]; } });
   const [input, setInput] = useState(''); const [busy, setBusy] = useState(false); const end = useRef(null);
   useEffect(() => { try { sessionStorage.setItem('tena_chat', JSON.stringify(msgs.slice(-30))); } catch {} end.current?.scrollIntoView({ block: 'end' }); }, [msgs, busy]);
   const send = async text => {
     const q = (text ?? input).trim(); if (!q || busy) return;
     const history = msgs.map(m => ({ role: m.role, content: m.text })); setMsgs(m => [...m, { role: 'user', text: q }]); setInput(''); setBusy(true);
-    try { const d = await request('/api/ai/assistant', { method: 'POST', body: JSON.stringify({ question: q, history }) }); setMsgs(m => [...m, { role: 'assistant', text: d.answer, urgent: d.emergency }]); }
+    try { const d = await request('/api/ai/assistant', { method: 'POST', body: JSON.stringify({ question: q, history }) }); setMsgs(m => [...m, { role: 'assistant', text: d.answer, urgent: d.emergency, doctors: d.doctors }]); }
     catch (e) { setMsgs(m => [...m, { role: 'assistant', text: e.message, error: true }]); }
     setBusy(false);
   };
   return <div className="chatbot">
-    <div className="assistant-heading"><div className="ai-avatar"><Sparkles/></div><div><h2>Care assistant</h2><p>Platform help, not medical advice.</p></div>{onClose && <button className="icon-btn" onClick={onClose} aria-label="Close chat"><X size={18}/></button>}</div>
-    <div className="chat-window" aria-live="polite">{msgs.map((m, i) => <div className={`chat-row ${m.role}`} key={i}>{m.role === 'assistant' && <div className="chat-avatar"><Sparkles size={15}/></div>}<div className="chat-bubble" style={m.urgent ? { background: '#fdecec', color: '#8a1c1c', fontWeight: 600 } : m.error ? { opacity: .75 } : undefined}>{m.text}</div></div>)}
+    <div className="assistant-heading"><div className="ai-avatar"><Sparkles/></div><div><h2>Skin-care assistant</h2><p>General skin tips and doctor matching. Not a diagnosis.</p></div>{onClose && <button className="icon-btn" onClick={onClose} aria-label="Close chat"><X size={18}/></button>}</div>
+    <div className="chat-window" aria-live="polite">{msgs.map((m, i) => <div className={`chat-row ${m.role}`} key={i}>{m.role === 'assistant' && <div className="chat-avatar"><Sparkles size={15}/></div>}<div className="chat-bubble" style={m.urgent ? { background: '#fdecec', color: '#8a1c1c', fontWeight: 600 } : m.error ? { opacity: .75 } : undefined}>{m.text}{!!m.doctors?.length && <div className="suggest-docs"><small>Doctors who may help:</small>{m.doctors.map(d => <button type="button" key={d.id} onClick={() => onDoctor && onDoctor(d.id)}><Avatar name={d.name} url={d.photo_url} size={26} /> <span>{d.name}<em>{d.specialty}</em></span><ArrowRight size={14} /></button>)}</div>}</div></div>)}
       {busy && <div className="chat-row assistant"><div className="chat-avatar"><Sparkles size={15}/></div><div className="chat-bubble">Typing…</div></div>}<div ref={end}/></div>
-    {msgs.length < 3 && <div className="chat-chips">{['How do I book?', 'How does payment work?', 'Can I cancel for a refund?', 'እንዴት ቀጠሮ እይዛለሁ?'].map(q => <button key={q} onClick={() => send(q)}>{q}</button>)}</div>}
+    {msgs.length < 3 && <div className="chat-chips">{['I get acne, who should I see?', 'How do I take a good skin photo?', 'Video or video + chat?', 'How do I sunscreen properly?'].map(q => <button key={q} onClick={() => send(q)}>{q}</button>)}</div>}
     <form className="chat-compose" onSubmit={e => { e.preventDefault(); send(); }}><input value={input} onChange={e => setInput(e.target.value)} maxLength={500} placeholder="Ask a question…" aria-label="Your question"/><button className="btn btn-primary icon-send" disabled={busy || !input.trim()} aria-label="Send"><Send size={17}/></button></form>
-    <p className="disclaimer">AI-generated. It does not diagnose or advise on treatment. In an emergency call 907 or go to the nearest hospital.</p>
+    <p className="disclaimer">AI-generated. It cannot diagnose or choose treatment: a doctor must look at your skin. In an emergency call 907 or go to the nearest hospital.</p>
   </div>;
 }
-export function ChatLauncher() {
+export function ChatLauncher({ onDoctor }) {
   const [open, setOpen] = useState(false); const [on, setOn] = useState(false);
   useEffect(() => { request('/api/ai/status').then(d => setOn(d.assistant)).catch(() => {}); }, []);
   if (!on) return null;
-  return <>{open && <div className="chat-float"><ChatPanel onClose={() => setOpen(false)}/></div>}
+  return <>{open && <div className="chat-float"><ChatPanel onClose={() => setOpen(false)} onDoctor={id => { setOpen(false); onDoctor && onDoctor(id); }}/></div>}
     <button className="chat-fab" onClick={() => setOpen(!open)} aria-label={open ? 'Close assistant' : 'Open assistant'}>{open ? <X/> : <MessageCircle/>}</button></>;
 }
 
@@ -62,10 +63,22 @@ export function TicketQueue({ flash }) {
 
 /* ---------- Admin ---------- */
 export function ClinicianReview({ flash }) {
-  const [list, reload] = useLoad('/api/admin/clinicians');
-  const decide = async (id, decision) => { const reason = decision === 'rejected' ? window.prompt('Reason for rejection?') || '' : ''; try { await request(`/api/admin/clinicians/${id}/review`, { method: 'POST', body: JSON.stringify({ decision, reason }) }); flash(`Clinician ${decision}.`); reload(); } catch (e) { flash(e.message, 'error'); } };
-  return <div className="section-stack"><p className="muted">Check each registration number with the regulator before approving. Only approved clinicians are listed to patients.</p>{list?.length === 0 && <p className="muted">No clinicians have registered yet.</p>}
-    {list?.map(c => <article className="panel record-top" key={c.id}><div><strong>{c.name}</strong> · {c.specialty}<br/><small className="muted">{c.email} · Reg. {c.reg_number || '—'}</small></div><div className="button-row"><Status s={c.status}/><button className="btn btn-primary btn-sm" disabled={c.status === 'approved'} onClick={() => decide(c.id, 'approved')}>Approve</button><button className="btn btn-outline btn-sm" disabled={c.status === 'rejected'} onClick={() => decide(c.id, 'rejected')}>Reject</button></div></article>)}</div>;
+  const [list, reload] = useLoad('/api/admin/clinicians'); const [tab, setTab] = useState('pending'); const [reject, setReject] = useState(null); const [reason, setReason] = useState(''); const [open, setOpen] = useState(null);
+  const decide = async (id, decision, why = '') => { try { await request(`/api/admin/clinicians/${id}/review`, { method: 'POST', body: JSON.stringify({ decision, reason: why }) }); flash(decision === 'approved' ? 'Doctor approved. They can now add availability and patients can find them.' : 'Doctor rejected. They will see your reason and can resubmit.'); setReject(null); setReason(''); reload(); } catch (e) { flash(e.message, 'error'); } };
+  const shown = (list || []).filter(c => tab === 'all' || c.status === tab); const count = s => (list || []).filter(c => c.status === s).length;
+  return <div className="section-stack"><p className="muted">Check each registration number with the regulator before approving. Only approved doctors are shown to patients.</p>
+    <div className="tab-row">{[['pending', 'Waiting for review'], ['approved', 'Approved'], ['rejected', 'Rejected'], ['draft', 'Still writing profile'], ['all', 'All']].map(([k, l]) => <button key={k} className={tab === k ? 'on' : ''} onClick={() => setTab(k)}>{l}{k !== 'all' && <b>{count(k)}</b>}</button>)}</div>
+    {list && shown.length === 0 && <p className="muted">Nobody here right now.</p>}
+    {shown.map(c => <article className="panel review-card" key={c.id}>
+      <div className="review-head"><Avatar name={c.name} url={c.photo_url} size={64} round={false} /><div className="review-id"><strong>{c.name}</strong> <Status s={c.status}/><br/><span>{c.specialty}{c.years_exp ? ` · ${c.years_exp} years` : ''} · {c.language}</span><br/><small className="muted">{c.email} · Licence: <b>{c.reg_number || 'not given'}</b>{c.submitted_at && ` · submitted ${dateTime(c.submitted_at)}`}</small></div></div>
+      {c.bio ? <p className="review-bio">{open === c.id ? c.bio : c.bio.slice(0, 220) + (c.bio.length > 220 ? '…' : '')}{c.bio.length > 220 && <button className="text-button" onClick={() => setOpen(open === c.id ? null : c.id)}>{open === c.id ? 'less' : 'more'}</button>}</p> : <p className="muted">No description yet.</p>}
+      <div className="chip-row">{(c.conditions || '').split(',').filter(x => x.trim()).map(x => <span className="chip" key={x}>{x.trim()}</span>)}</div>
+      <p className="muted">Video {money(c.fee_etb)} · Video + chat {money(c.fee_chat_etb)}</p>
+      {c.review_reason && c.status === 'rejected' && <p className="review-reason">Reason given: {c.review_reason}</p>}
+      {!!c.missing?.length && c.status !== 'approved' && <p className="review-missing">Missing: {c.missing.join('; ')}</p>}
+      <div className="button-row"><button className="btn btn-primary btn-sm" disabled={c.status === 'approved' || c.status === 'draft'} onClick={() => decide(c.id, 'approved')}><Check size={14}/> Approve</button><button className="btn btn-outline btn-sm" disabled={c.status === 'rejected' || c.status === 'draft'} onClick={() => { setReject(c); setReason(''); }}>Reject…</button></div>
+    </article>)}
+    {reject && <Modal title={`Reject ${reject.name}?`} onClose={() => setReject(null)}><form className="form-stack" onSubmit={e => { e.preventDefault(); decide(reject.id, 'rejected', reason); }}><label>Tell them what to fix (they will see this)<textarea rows={4} required value={reason} onChange={e => setReason(e.target.value)} placeholder="e.g. The licence number could not be verified. Please check it and resubmit."/></label><div className="button-row"><button className="btn btn-primary">Reject and send reason</button><button type="button" className="btn btn-ghost" onClick={() => setReject(null)}>Cancel</button></div></form></Modal>}</div>;
 }
 export function FinancePanel({ flash }) {
   const [pay, reloadPay] = useLoad('/api/finance/payouts'); const [ref, reloadRef] = useLoad('/api/finance/refunds');
@@ -75,8 +88,8 @@ export function FinancePanel({ flash }) {
     <div className="panel"><h2>Clinician payouts</h2>{pay?.length === 0 && <p className="muted">Payouts appear after notes are signed.</p>}
       {pay?.map(p => <div className="queue-item record-top" key={p.id}><span><strong>{p.clinician}</strong><br/><small className="muted">{money(p.net)} net (commission {money(p.commission)})</small></span>{p.status === 'pending' ? <button className="btn btn-primary btn-sm" onClick={() => act(`/api/finance/payouts/${p.id}/paid`, 'Marked paid.')}>Mark paid</button> : <Status s="paid"/>}</div>)}</div></div>;
 }
-const SWITCHES = { ai_assistant: 'Patient help chatbot', ai_notes: 'Clinician AI (note drafts, copilot, questions, post-call, transcription)', ai_translate: 'Translation', ai_ticket_drafts: 'Support-ticket drafting', ai_analytics: 'AI analytics summary' };
-const NUMBERS = { commission_pct: 'Platform commission (%)', cancel_hours: 'Free cancel window (hours before visit)', reminder_hours: 'Reminder (hours before visit)', hold_minutes: 'Unpaid slot hold (minutes)' };
+const SWITCHES = { ai_assistant: 'Patient skin-care assistant', ai_notes: 'Clinician AI (note drafts, copilot, questions, post-call, transcription)', ai_translate: 'Translation', ai_ticket_drafts: 'Support-ticket drafting', ai_analytics: 'AI analytics summary' };
+const NUMBERS = { chat_days: 'Chat stays open after a Video + chat visit (days)', commission_pct: 'Platform commission (%)', cancel_hours: 'Free cancel window (hours before visit)', reminder_hours: 'Reminder (hours before visit)', hold_minutes: 'Unpaid slot hold (minutes)' };
 export function SettingsPanel({ flash }) {
   const [c, setC] = useState(null); const [st, setSt] = useState({ role: 'support', name: '', email: '', password: '' }); const [ai, setAi] = useState(null);
   useEffect(() => { request('/api/admin/config').then(setC).catch(e => flash(e.message, 'error')); request('/api/ai/status').then(setAi).catch(() => {}); }, []); // eslint-disable-line
@@ -95,10 +108,11 @@ export function SettingsPanel({ flash }) {
 }
 
 /* ---------- Clinician: prescriptions ---------- */
-export function PrescriptionForm({ aid, flash }) {
+const HINTS = { medicine: 'e.g. Adapalene 0.1% gel', dose: 'e.g. thin layer', route: 'e.g. topical', frequency: 'e.g. once at night', duration: 'e.g. 8 weeks', quantity: 'e.g. 1 tube (30 g)', instructions: 'e.g. avoid sun, use sunscreen' };
+export function PrescriptionForm({ aid, flash, onIssued }) {
   const empty = { medicine: '', dose: '', route: '', frequency: '', duration: '', quantity: '', instructions: '' }; const [rx, setRx] = useState(empty);
-  const submit = async e => { e.preventDefault(); try { await request(`/api/appointments/${aid}/prescriptions`, { method: 'POST', body: JSON.stringify(rx) }); flash('Prescription issued.'); setRx(empty); } catch (x) { flash(x.message, 'error'); } };
-  return <form className="form-stack rx-form" onSubmit={submit}><h3>Prescription</h3><div className="form-grid">{Object.keys(empty).map(k => <label key={k}>{k[0].toUpperCase() + k.slice(1)}<input value={rx[k]} onChange={e => setRx({ ...rx, [k]: e.target.value })} required={k !== 'instructions'}/></label>)}</div><button className="btn btn-outline">Issue prescription</button></form>;
+  const submit = async e => { e.preventDefault(); try { await request(`/api/appointments/${aid}/prescriptions`, { method: 'POST', body: JSON.stringify(rx) }); flash('Prescription sent to the patient.'); setRx(empty); onIssued && onIssued(); } catch (x) { flash(x.message, 'error'); } };
+  return <form className="form-stack rx-form" onSubmit={submit}><h3>Prescription</h3><div className="form-grid">{Object.keys(empty).map(k => <label key={k}>{k[0].toUpperCase() + k.slice(1)}<input value={rx[k]} placeholder={HINTS[k]} onChange={e => setRx({ ...rx, [k]: e.target.value })} required={k !== 'instructions'}/></label>)}</div><button className="btn btn-outline">Issue prescription</button></form>;
 }
 
 /* ---------- small helpers ---------- */

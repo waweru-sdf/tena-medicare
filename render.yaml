@@ -2,10 +2,13 @@ services:
   - type: web
     name: telemedicine-ethiopia
     runtime: python
-    buildCommand: pip install -r backend/requirements.txt && cd frontend && npm ci && npm run build
+    buildCommand: pip install -r backend/requirements.txt && cd frontend && npm install && npm run build
     startCommand: cd backend && gunicorn app:app --workers 1 --bind 0.0.0.0:$PORT
-    healthCheckPath: /api/health
     envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.3"
+      - key: NODE_VERSION
+        value: "20"
       - key: PRODUCTION
         value: "1"
       - key: SECRET_KEY

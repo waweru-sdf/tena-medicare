@@ -1,4 +1,28 @@
-# Tena Medicare — Ethiopia telemedicine
+---
+title: Tena Medicare
+emoji: 🩺
+colorFrom: blue
+colorTo: blue
+sdk: docker
+app_port: 7860
+pinned: false
+---
+
+# Tena Medicare: online dermatology for Ethiopia
+
+**How it works now**
+
+- **Public page:** only explains the service (skin care, the two plans, privacy, FAQ).
+- **After sign-in:** overview, then *Find a doctor*. Every doctor has a profile (photo, what they treat, languages, fees). The patient picks a time, writes what is going on, attaches up to 4 photos, chooses a plan and pays with Chapa.
+- **Two plans:** *Video visit* (one consultation) and *Video + chat* (the visit plus messaging with photos for 30 days; change it in Admin > Settings > "Chat stays open").
+- **Prescriptions:** a doctor can prescribe for any paid visit, on either plan. Patients see them under My records.
+- **Many-to-many:** a doctor has many patients (*My patients*); a patient can have many doctors (*My doctors*).
+- **Doctors:** register, fill in the profile, submit, wait for the admin to approve or reject (with a reason). Only approved doctors are listed or can publish times.
+- **Saved details:** sign-in lasts 14 days and renews on use, the page you were on is remembered, the booking message and chat drafts are kept, and the patient's skin profile (allergies, products, history) is saved once and shown to each doctor they book.
+- **AI:** a skin-care assistant for patients (general tips, doctor matching, emergency redirect, never a diagnosis). Doctor-side AI helpers stay switchable in Settings.
+
+Demo logins (when `SEED_DEMO=1`): doctors `demo0@example.com` to `demo3@example.com`, a doctor waiting for approval `demopending@example.com`, a patient `demopatient@example.com`; password `DemoPass123`.
+
 
 Flask API + React site. Patients book and pay in ETB through **Chapa**, meet clinicians in a private video room, and get help from an **OpenAI chatbot** (Anthropic also supported). Admin, finance, support and clinician screens are included.
 
