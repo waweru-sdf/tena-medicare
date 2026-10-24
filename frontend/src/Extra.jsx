@@ -12,7 +12,7 @@ const useLoad = (path, deps = []) => {
 const Status = ({ s }) => <span className={`status ${['resolved', 'paid', 'approved', 'refunded'].includes(s) ? 'green' : ['rejected', 'failed'].includes(s) ? 'red' : 'amber'}`}>{String(s).replaceAll('_', ' ')}</span>;
 
 /* ---------- Chatbot (OpenAI or Anthropic, chosen on the server) ---------- */
-const WELCOME = 'Hello! I am the Tena Medicare skin-care assistant. I can share general skin-care tips, help you choose a doctor and plan, and explain booking and payment. I cannot diagnose or prescribe. / ሰላም! ስለ ቆዳ እንክብካቤ አጠቃላይ መረጃ እና ዶክተር ለመምረጥ መርዳት እችላለሁ።';
+const WELCOME = 'Hello! I am the Tena Medicine skin-care assistant. I can share general skin-care tips, help you choose a doctor and plan, and explain booking and payment. I cannot diagnose or prescribe. / ሰላም! ስለ ቆዳ እንክብካቤ አጠቃላይ መረጃ እና ዶክተር ለመምረጥ መርዳት እችላለሁ።';
 export function ChatPanel({ onClose, onDoctor }) {
   const [msgs, setMsgs] = useState(() => { try { return JSON.parse(sessionStorage.getItem('tena_chat')) || [{ role: 'assistant', text: WELCOME }]; } catch { return [{ role: 'assistant', text: WELCOME }]; } });
   const [input, setInput] = useState(''); const [busy, setBusy] = useState(false); const end = useRef(null);
@@ -73,7 +73,7 @@ export function ClinicianReview({ flash }) {
       <div className="review-head"><Avatar name={c.name} url={c.photo_url} size={64} round={false} /><div className="review-id"><strong>{c.name}</strong> <Status s={c.status}/><br/><span>{c.specialty}{c.years_exp ? ` · ${c.years_exp} years` : ''} · {c.language}</span><br/><small className="muted">{c.email} · Licence: <b>{c.reg_number || 'not given'}</b>{c.submitted_at && ` · submitted ${dateTime(c.submitted_at)}`}</small></div></div>
       {c.bio ? <p className="review-bio">{open === c.id ? c.bio : c.bio.slice(0, 220) + (c.bio.length > 220 ? '…' : '')}{c.bio.length > 220 && <button className="text-button" onClick={() => setOpen(open === c.id ? null : c.id)}>{open === c.id ? 'less' : 'more'}</button>}</p> : <p className="muted">No description yet.</p>}
       <div className="chip-row">{(c.conditions || '').split(',').filter(x => x.trim()).map(x => <span className="chip" key={x}>{x.trim()}</span>)}</div>
-      <p className="muted">Video {money(c.fee_etb)} · Video + chat {money(c.fee_chat_etb)}</p>
+      <p className="muted">Prices set by admin: chat {money(c.price_chat)} · video + chat {money(c.price_video_chat)}</p>
       {c.review_reason && c.status === 'rejected' && <p className="review-reason">Reason given: {c.review_reason}</p>}
       {!!c.missing?.length && c.status !== 'approved' && <p className="review-missing">Missing: {c.missing.join('; ')}</p>}
       <div className="button-row"><button className="btn btn-primary btn-sm" disabled={c.status === 'approved' || c.status === 'draft'} onClick={() => decide(c.id, 'approved')}><Check size={14}/> Approve</button><button className="btn btn-outline btn-sm" disabled={c.status === 'rejected' || c.status === 'draft'} onClick={() => { setReject(c); setReason(''); }}>Reject…</button></div>
@@ -89,7 +89,7 @@ export function FinancePanel({ flash }) {
       {pay?.map(p => <div className="queue-item record-top" key={p.id}><span><strong>{p.clinician}</strong><br/><small className="muted">{money(p.net)} net (commission {money(p.commission)})</small></span>{p.status === 'pending' ? <button className="btn btn-primary btn-sm" onClick={() => act(`/api/finance/payouts/${p.id}/paid`, 'Marked paid.')}>Mark paid</button> : <Status s="paid"/>}</div>)}</div></div>;
 }
 const SWITCHES = { ai_assistant: 'Patient skin-care assistant', ai_notes: 'Clinician AI (note drafts, copilot, questions, post-call, transcription)', ai_translate: 'Translation', ai_ticket_drafts: 'Support-ticket drafting', ai_analytics: 'AI analytics summary' };
-const NUMBERS = { chat_days: 'Chat stays open after a Video + chat visit (days)', commission_pct: 'Platform commission (%)', cancel_hours: 'Free cancel window (hours before visit)', reminder_hours: 'Reminder (hours before visit)', hold_minutes: 'Unpaid slot hold (minutes)' };
+const NUMBERS = { chat_days: 'Chat stays open after payment or after the video visit (days)', commission_pct: 'Platform commission (%)', cancel_hours: 'Free cancel window (hours before visit)', reminder_hours: 'Reminder (hours before visit)', hold_minutes: 'Unpaid slot hold (minutes)' };
 export function SettingsPanel({ flash }) {
   const [c, setC] = useState(null); const [st, setSt] = useState({ role: 'support', name: '', email: '', password: '' }); const [ai, setAi] = useState(null);
   useEffect(() => { request('/api/admin/config').then(setC).catch(e => flash(e.message, 'error')); request('/api/ai/status').then(setAi).catch(() => {}); }, []); // eslint-disable-line
@@ -98,7 +98,10 @@ export function SettingsPanel({ flash }) {
   const runTest = async () => { setTesting(true); try { setTest(await request('/api/admin/integrations-test', { method: 'POST', body: '{}' })); } catch (e) { flash(e.message, 'error'); } setTesting(false); };
   const save = async () => { try { setC(await request('/api/admin/config', { method: 'PUT', body: JSON.stringify(c) })); flash('Settings saved.'); } catch (e) { flash(e.message, 'error'); } };
   const addStaff = async e => { e.preventDefault(); try { await request('/api/admin/staff', { method: 'POST', body: JSON.stringify(st) }); flash('Staff account created.'); setSt({ role: 'support', name: '', email: '', password: '' }); } catch (x) { flash(x.message, 'error'); } };
-  return <div className="two-column"><div className="panel form-panel form-stack"><h2>AI switches</h2><p className="muted">{ai?.configured ? `Connected to ${ai.provider}.` : `No API key found for ${ai?.provider || 'the AI provider'}: add it to backend/.env and restart.`} Clinical features stay off until your clinical lead approves them.</p>
+  return <div className="two-column"><div className="panel form-panel form-stack"><h2>Prices (birr)</h2><p className="muted">One price per plan, the same for every doctor. Only you can change these. New bookings use the new price straight away; payments already made are not affected.</p>
+    <div className="form-grid"><label>Chat with a doctor<input type="number" min="1" step="1" value={c.price_chat} onChange={e => setC({ ...c, price_chat: e.target.value })}/></label><label>Video consultation + chat<input type="number" min="1" step="1" value={c.price_video_chat} onChange={e => setC({ ...c, price_video_chat: e.target.value })}/></label></div>
+    <button className="btn btn-primary" onClick={save}>Save prices</button>
+    <h2 style={{ marginTop: 16 }}>AI switches</h2><p className="muted">{ai?.configured ? `Connected to ${ai.provider}.` : `No API key found for ${ai?.provider || 'the AI provider'}: add it to backend/.env and restart.`} Clinical features stay off until your clinical lead approves them.</p>
     {Object.entries(SWITCHES).map(([k, l]) => <label className="switch-row" key={k}><input type="checkbox" checked={c[k] === '1'} onChange={e => setC({ ...c, [k]: e.target.checked ? '1' : '0' })}/> {l}</label>)}
     <button type="button" className="btn btn-outline" onClick={runTest} disabled={testing}><RefreshCw size={15}/> {testing ? 'Testing…' : 'Test connections (AI and Chapa)'}</button>
     {test && <div className="test-result">{[['AI', test.ai], ['Chapa', test.chapa]].map(([n, r]) => <p key={n} className={r.ok ? 'ok' : 'bad'}><b>{n}{r.provider ? ` (${r.provider}${r.model ? ', ' + r.model : ''})` : r.mode ? ` (${r.mode} mode)` : ''}:</b> {r.ok ? 'Connected.' : r.message}</p>)}<p className="muted">Chapa webhook URL: <code>{test.webhook_url}</code></p></div>}

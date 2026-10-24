@@ -1,4 +1,4 @@
-"""Tena Medicare backend (Flask): a dermatology telemedicine ecosystem.
+"""Dr Feysal Tena Medicine backend (Flask): a dermatology telemedicine ecosystem.
 Doctors build a profile and wait for admin approval; patients find a doctor, book a video visit in one of two tiers
 (video, or video + 30 days of chat), pay with Chapa, send photos of their skin, and receive prescriptions.
 A doctor has many patients and a patient can have many doctors."""
@@ -35,7 +35,9 @@ PRIVACY_VERSION = "v1.0"
 TOKEN_DAYS = max(1, int(os.getenv("TOKEN_DAYS", "14")))   # sign-in lasts this long and renews while the person keeps using the site
 MAX_IMAGE_BYTES = 6 * 1024 * 1024
 app.config["MAX_CONTENT_LENGTH"] = 8 * 1024 * 1024
-TIERS = {"video": "Video visit", "video_chat": "Video visit + chat"}
+TIERS = {"chat": "Chat with a doctor", "video_chat": "Video consultation + chat", "video": "Video visit (earlier plan)"}
+BOOKABLE = ("chat", "video_chat")   # "video" only exists on visits booked before the plans changed
+CHAT_TIERS = ("chat", "video_chat")
 CHAPA_KEY = os.getenv("CHAPA_SECRET_KEY", "")
 CHAPA_API = "https://api.chapa.co/v1"
 CHAPA_WEBHOOK_SECRET = os.getenv("CHAPA_WEBHOOK_SECRET", "")
@@ -244,14 +246,13 @@ def photo_url(c): return f"/api/media/{c.photo_id}" if c.photo_id else None
 def iso(d): return d.isoformat() + "Z" if d else None
 
 def tier_price(c, tier):
-    """Video-only uses the doctor's fee. Video + chat uses their own chat price, or 1.5x the video price."""
-    base = c.fee_kes or 0
-    return base if tier != "video_chat" else int(c.fee_chat_etb or round(base * 1.5))
+    """One price per plan for every doctor. Only the admin changes it (Settings > Prices)."""
+    return int(float(cfg("price_chat" if tier == "chat" else "price_video_chat")))
 
 def chat_window(patient_id, clinician_id):
-    """End of the open chat window for this pair, or None. Only a paid video + chat visit opens it."""
+    """End of the open chat window for this pair, or None. Only a paid chat or video + chat plan opens it."""
     best = None
-    for a in Appointment.query.filter_by(patient_id=patient_id, clinician_id=clinician_id, tier="video_chat"):
+    for a in Appointment.query.filter(Appointment.patient_id == patient_id, Appointment.clinician_id == clinician_id, Appointment.tier.in_(CHAT_TIERS)):
         if a.status in LIVE_OR_DONE and a.chat_until and a.chat_until > now() and is_paid(a):
             best = max(best, a.chat_until) if best else a.chat_until
     return best
@@ -261,21 +262,22 @@ def appt_json(a):
                 clinician=a.clinician.user.name, specialty=a.clinician.specialty, fee_etb=tier_price(a.clinician, a.tier),
                 patient=a.patient.name, patient_id=a.patient_id, clinician_id=a.clinician_id, payment=payment_state(a),
                 tier=a.tier or "video", tier_label=TIERS.get(a.tier or "video"), photo_url=photo_url(a.clinician),
-                chat_until=iso(a.chat_until), chat_open=bool(chat_window(a.patient_id, a.clinician_id)) and (a.tier == "video_chat"),
+                chat_until=iso(a.chat_until), chat_open=bool(chat_window(a.patient_id, a.clinician_id)) and (a.tier in CHAT_TIERS),
                 photos=AppointmentPhoto.query.filter_by(appointment_id=a.id).count(),
                 conversation_id=conv_of(a),
                 hold_expires_at=a.slot.hold_expires_at.isoformat() + "Z" if a.status == "pending_payment" and a.slot.hold_expires_at else None)
 
 def conv_of(a):
-    if (a.tier or "video") != "video_chat": return None
+    if (a.tier or "video") not in CHAT_TIERS: return None
     cv = Conversation.query.filter_by(patient_id=a.patient_id, clinician_id=a.clinician_id).first()
     return cv.id if cv else None
 
 def confirm_appt(a):
     """A verified payment (or the dev simulation) turns a held slot into a confirmed visit, and opens chat for tier 2."""
     a.status = "confirmed"; a.slot.hold_expires_at = None
-    if a.tier == "video_chat":
-        a.chat_until = a.slot.starts_at + dt.timedelta(minutes=a.slot.duration_min, days=int(float(cfg("chat_days"))))
+    if a.tier in CHAT_TIERS:
+        start = now() if a.tier == "chat" else a.slot.starts_at + dt.timedelta(minutes=a.slot.duration_min)   # chat-only starts when paid
+        a.chat_until = start + dt.timedelta(days=int(float(cfg("chat_days"))))
         if not Conversation.query.filter_by(patient_id=a.patient_id, clinician_id=a.clinician_id).first():
             db.session.add(Conversation(patient_id=a.patient_id, clinician_id=a.clinician_id))
 
@@ -305,7 +307,7 @@ def save_image(storage, kind, encrypt):
 def clin_card(c, full=False, slots=None):
     conds = [x.strip() for x in (c.conditions or "").split(",") if x.strip()]
     d = dict(id=c.id, name=c.user.name, specialty=c.specialty, language=c.language, conditions=conds, years_exp=c.years_exp,
-             photo_url=photo_url(c), fee_etb=c.fee_kes, fee_video_etb=tier_price(c, "video"), fee_chat_etb=tier_price(c, "video_chat"),
+             photo_url=photo_url(c), price_chat=tier_price(c, "chat"), price_video_chat=tier_price(c, "video_chat"),
              bio=(c.bio or "") if full else (c.bio or "")[:160], open_slots=slots)
     return d
 
@@ -455,11 +457,10 @@ def profile_missing(c):
     if not c.photo_id: miss.append("A profile photo")
     if not (c.conditions or "").strip(): miss.append("The conditions you treat")
     if not (c.reg_number or "").strip(): miss.append("Your medical registration number")
-    if not c.fee_kes or c.fee_kes < 1: miss.append("Your consultation fee")
     return miss
 
 def profile_json(c):
-    return dict(specialty=c.specialty, language=c.language, fee_etb=c.fee_kes, fee_chat_etb=c.fee_chat_etb, fee_chat_effective=tier_price(c, "video_chat"),
+    return dict(specialty=c.specialty, language=c.language, price_chat=tier_price(c, "chat"), price_video_chat=tier_price(c, "video_chat"),
                 currency="ETB", status=c.status, review_reason=c.review_reason, reg_number=c.reg_number, bio=c.bio or "",
                 conditions=c.conditions or "", years_exp=c.years_exp, photo_url=photo_url(c), missing=profile_missing(c),
                 name=c.user.name, submitted_at=iso(c.submitted_at))
@@ -477,12 +478,6 @@ def clin_profile():
             raw = d["conditions"] if isinstance(d["conditions"], list) else str(d["conditions"]).split(",")
             c.conditions = ", ".join(x.strip() for x in raw if str(x).strip())[:400]
         if "years_exp" in d: c.years_exp = int(d["years_exp"]) if str(d["years_exp"]).strip() else None
-        try:
-            if d.get("fee_etb", d.get("fee_kes")) not in (None, ""): c.fee_kes = int(d.get("fee_etb", d.get("fee_kes")))
-            if "fee_chat_etb" in d: c.fee_chat_etb = int(d["fee_chat_etb"]) if str(d["fee_chat_etb"]).strip() else None
-        except (TypeError, ValueError): return jsonify(error="Fees must be whole numbers in birr."), 400
-        if (c.fee_kes or 0) < 1 or (c.fee_chat_etb is not None and c.fee_chat_etb < (c.fee_kes or 0)):
-            return jsonify(error="The video + chat price cannot be lower than the video price."), 400
         if "reg_number" in d:
             new = str(d["reg_number"]).strip()[:60]
             if new != (c.reg_number or "") and c.status == "approved": c.status = "pending"; c.submitted_at = now()   # a new licence number must be checked again
@@ -545,15 +540,25 @@ def add_slot():
 def book():
     if not g.user.consent_at: return jsonify(error="Please accept the privacy notice first."), 403
     d = request.json or {}
+    tier = d.get("tier") or "video_chat"
+    if tier not in BOOKABLE: return jsonify(error="Choose a plan: chat with a doctor, or video consultation + chat."), 400
     expire_holds()  # free abandoned holds before the atomic slot claim
-    # atomic claim: only one concurrent request flips booked False -> True
-    claimed = Slot.query.filter_by(id=d.get("slot_id"), booked=False).update({"booked": True})
-    s = db.session.get(Slot, d.get("slot_id"))
-    if not claimed or db.session.get(Clinician, s.clinician_id).status != "approved":
-        db.session.rollback(); return jsonify(error="That slot is no longer available."), 409
+    if tier == "chat":
+        # No appointment time: a placeholder slot (0 minutes, already taken) keeps one record shape for every plan.
+        c = db.session.get(Clinician, d.get("clinician_id") or 0)
+        if not c or c.status != "approved": return jsonify(error="That doctor is not available."), 409
+        s = Slot(clinician_id=c.id, starts_at=now(), duration_min=0, booked=True)
+        for _ in range(5):   # starts_at is unique per doctor; nudge on the rare collision
+            if not Slot.query.filter_by(clinician_id=c.id, starts_at=s.starts_at).first(): break
+            s.starts_at += dt.timedelta(microseconds=1)
+        db.session.add(s); db.session.flush()
+    else:
+        # atomic claim: only one concurrent request flips booked False -> True
+        claimed = Slot.query.filter_by(id=d.get("slot_id"), booked=False).update({"booked": True})
+        s = db.session.get(Slot, d.get("slot_id"))
+        if not claimed or db.session.get(Clinician, s.clinician_id).status != "approved":
+            db.session.rollback(); return jsonify(error="That slot is no longer available."), 409
     s.hold_expires_at = now() + dt.timedelta(minutes=int(cfg("hold_minutes")))
-    tier = d.get("tier") or "video"
-    if tier not in TIERS: db.session.rollback(); return jsonify(error="Choose video, or video + chat."), 400
     a = Appointment(slot_id=s.id, patient_id=g.user.id, clinician_id=s.clinician_id, reason=(d.get("reason") or "")[:500], tier=tier)
     db.session.add(a); audit("book", s.clinician_id.__str__()); db.session.commit()
     return jsonify(appt_json(a))
@@ -602,7 +607,7 @@ def pay(aid):
                    "first_name": parts[0], "last_name": " ".join(parts[1:]) or parts[0], "tx_ref": ref,
                    "callback_url": f"{APP_URL}/api/payments/chapa/callback?ref={ref}",
                    "return_url": f"{RETURN_BASE}/?ref={ref}",
-                   "customization": {"title": "Tena Medicare", "description": TIERS.get(a.tier, "Skin consultation")},
+                   "customization": {"title": "Dr Feysal Tena Medicine", "description": TIERS.get(a.tier, "Skin consultation")},
                    "meta": {"appointment_id": a.id}}
         if chapa_phone(g.user.phone): payload["phone_number"] = chapa_phone(g.user.phone)
         response = requests.post(CHAPA_API + "/transaction/initialize", timeout=20,
@@ -706,6 +711,8 @@ def my_appts():
 def cancel(aid):
     a = my_appt_or_404(aid)
     if not a or a.status not in ("pending_payment", "confirmed"): return jsonify(error="Cannot cancel this appointment."), 400
+    if a.tier == "chat" and a.status == "confirmed" and g.user.role == "patient":
+        return jsonify(error="A paid chat plan cannot be cancelled here. Contact support if something went wrong."), 400
     paid = Payment.query.filter_by(appointment_id=a.id, status="paid").first()
     refund_due = paid and (g.user.role == "clinician" or (a.slot.starts_at - now()).total_seconds() / 3600 >= float(cfg("cancel_hours")))
     if refund_due: refund_payment(paid, "Cancelled by " + g.user.role)
@@ -719,6 +726,7 @@ def cancel(aid):
 def room(aid):
     a = my_appt_or_404(aid)
     if not a or a.status not in ("confirmed", "checked_in", "in_consultation"): return jsonify(error="Room not available."), 403
+    if a.tier == "chat": return jsonify(error="This plan is chat only. Use Messages to talk to your doctor."), 400
     start = a.slot.starts_at
     if not (start - dt.timedelta(minutes=10) <= now() <= start + dt.timedelta(minutes=a.slot.duration_min + 30)):
         return jsonify(error="The room opens 10 minutes before your appointment."), 403
@@ -896,7 +904,7 @@ def msg_json(m):
 
 def ensure_conversations():
     """Make sure every paid video + chat visit of mine has its thread (covers visits paid before this feature existed)."""
-    q = Appointment.query.filter_by(tier="video_chat")
+    q = Appointment.query.filter(Appointment.tier.in_(CHAT_TIERS))
     q = q.filter_by(patient_id=g.user.id) if g.user.role == "patient" else q.filter_by(clinician_id=my_clinician().id)
     for a in q:
         if a.status in LIVE_OR_DONE and is_paid(a):
@@ -1047,7 +1055,7 @@ def admin_clins():
     rows = sorted(Clinician.query.all(), key=lambda c: (order.get(c.status, 9), c.id))
     return jsonify([dict(id=c.id, name=c.user.name, email=c.user.email, specialty=c.specialty, reg_number=c.reg_number, status=c.status,
                          bio=c.bio or "", conditions=c.conditions or "", years_exp=c.years_exp, language=c.language, photo_url=photo_url(c),
-                         fee_etb=c.fee_kes, fee_chat_etb=tier_price(c, "video_chat"), submitted_at=iso(c.submitted_at),
+                         price_chat=tier_price(c, "chat"), price_video_chat=tier_price(c, "video_chat"), submitted_at=iso(c.submitted_at),
                          review_reason=c.review_reason, missing=profile_missing(c)) for c in rows])
 
 @app.post("/api/admin/clinicians/<int:cid>/review")
@@ -1058,7 +1066,7 @@ def review(cid):
     if c.status == "draft": return jsonify(error="This doctor has not submitted their profile yet."), 409
     if d["decision"] == "rejected" and not (d.get("reason") or "").strip(): return jsonify(error="Give the doctor a reason so they can fix their profile."), 400
     c.status, c.reviewed_by, c.review_reason = d["decision"], g.user.id, (d.get("reason") or "")[:255]
-    notify(c.user, "doctor_review", "Your Tena Medicare profile was approved. You can now add availability." if c.status == "approved" else "Your profile needs changes before it can be approved.")
+    notify(c.user, "doctor_review", "Your Dr Feysal Tena Medicine profile was approved. You can now add availability." if c.status == "approved" else "Your profile needs changes before it can be approved.")
     audit("clinician_" + c.status, str(cid)); db.session.commit(); return jsonify(ok=True)
 
 @app.get("/api/admin/appointments")
@@ -1077,9 +1085,9 @@ def admin_audit():
 def health(): return jsonify(ok=True)
 
 # ---------- Phase 2: notifications, policy config, tickets, finance, MFA, AI ----------
-DEFAULTS = dict(commission_pct="15", cancel_hours="12", chat_days="30", reminder_hours="24", ai_assistant="1",  # help chatbot is non-clinical: on by default, still needs an API key
+DEFAULTS = dict(price_chat="800", price_video_chat="1500", commission_pct="15", cancel_hours="12", chat_days="30", reminder_hours="24", ai_assistant="1",  # help chatbot is non-clinical: on by default, still needs an API key
                  ai_notes="0", ai_intake="0", ai_translate="0", ai_ticket_drafts="0", ai_analytics="0", hold_minutes=str(HOLD_MINUTES))
-NUMERIC = ("commission_pct", "cancel_hours", "reminder_hours", "hold_minutes", "chat_days")
+NUMERIC = ("price_chat", "price_video_chat", "commission_pct", "cancel_hours", "reminder_hours", "hold_minutes", "chat_days")
 class Config(db.Model):
     key = db.Column(db.String(40), primary_key=True); value = db.Column(db.String(200))
 class Notification(db.Model):
@@ -1105,10 +1113,10 @@ def cfg(k):
 
 def notify(u, kind, text):
     """Generic wording only (SRS FR-07). A failed send is recorded, never raised, so bookings are unaffected."""
-    body, status = text + " Sign in to Tena Medicare for details.", "logged"
+    body, status = text + " Sign in to Dr Feysal Tena Medicine for details.", "logged"
     try:
         if os.getenv("SMTP_HOST") and u.email:
-            m = EmailMessage(); m["Subject"] = "Tena Medicare"; m["From"] = os.getenv("SMTP_FROM", ""); m["To"] = u.email; m.set_content(body)
+            m = EmailMessage(); m["Subject"] = "Dr Feysal Tena Medicine"; m["From"] = os.getenv("SMTP_FROM", ""); m["To"] = u.email; m.set_content(body)
             with smtplib.SMTP(os.getenv("SMTP_HOST"), int(os.getenv("SMTP_PORT", "587")), timeout=15) as s:
                 s.starttls(); s.login(os.getenv("SMTP_USER", ""), os.getenv("SMTP_PASS", "")); s.send_message(m)
             status = "email_sent"
@@ -1145,7 +1153,7 @@ def make_payout(a):
 @auth("patient")
 def reschedule(aid):
     a = my_appt_or_404(aid); d = request.json or {}
-    if not a or a.status not in ("pending_payment", "confirmed"): return jsonify(error="This appointment cannot be rescheduled."), 400
+    if not a or a.status not in ("pending_payment", "confirmed") or a.tier == "chat": return jsonify(error="This appointment cannot be rescheduled."), 400
     if (a.slot.starts_at - now()).total_seconds() / 3600 < float(cfg("cancel_hours")):
         return jsonify(error=f"Changes are not allowed within {cfg('cancel_hours')} hours of the appointment."), 400
     new = db.session.get(Slot, d.get("slot_id"))
@@ -1165,6 +1173,10 @@ def no_show(aid):
         return jsonify(error="You can mark a no-show 10 minutes after the start time."), 400
     a.status = "no_show"; audit("no_show", aid); db.session.commit(); return jsonify(ok=True)
 
+@app.get("/api/prices")
+def public_prices():
+    return jsonify(chat=tier_price(None, "chat"), video_chat=tier_price(None, "video_chat"), chat_days=int(float(cfg("chat_days"))), currency="ETB")
+
 @app.route("/api/admin/config", methods=["GET", "PUT"])
 @auth("admin")
 def config():
@@ -1173,7 +1185,8 @@ def config():
             if k not in DEFAULTS: continue
             try:
                 if k in NUMERIC: float(v)
-            except ValueError: return jsonify(error=f"{k} must be a number."), 400
+                if k.startswith("price_") and (float(v) < 1 or float(v) != int(float(v))): raise ValueError
+            except ValueError: return jsonify(error=("Prices must be whole numbers of birr, 1 or more." if k.startswith("price_") else f"{k} must be a number.")), 400
             c = db.session.get(Config, k) or Config(key=k); c.value = str(v)[:200]; db.session.add(c)
         audit("config_change"); db.session.commit()
     return jsonify({k: cfg(k) for k in DEFAULTS})
@@ -1278,7 +1291,7 @@ def reports():
 def mfa_setup():
     if g.user.mfa_on: return jsonify(error="Two-step sign-in is already on."), 400
     g.user.mfa_secret = pyotp.random_base32(); db.session.commit()
-    return jsonify(secret=g.user.mfa_secret, uri=pyotp.TOTP(g.user.mfa_secret).provisioning_uri(g.user.email, issuer_name="Tena Medicare"))
+    return jsonify(secret=g.user.mfa_secret, uri=pyotp.TOTP(g.user.mfa_secret).provisioning_uri(g.user.email, issuer_name="Dr Feysal Tena Medicine"))
 
 @app.post("/api/auth/mfa/enable")
 @auth()
@@ -1293,7 +1306,7 @@ EMERGENCY = re.compile(r"የደረት (ህመም|ሕመም)|መተንፈስ አ�
                        r"rash (and|with) (a )?(high )?fever|fever (and|with) (a )?(spreading )?rash|chemical burn|severe burn", re.I)
 def ai_model():
     m = os.getenv("AI_MODEL", "").strip()
-    if AI_PROVIDER == "gemini": return m if m.lower().startswith("gemini") else "gemini-2.5-flash"
+    if AI_PROVIDER == "gemini": return m if m.lower().startswith("gemini") else "gemini-3.8-flash"
     if AI_PROVIDER == "openai": return m if m and not m.lower().startswith(("claude", "gemini")) else "gpt-4o-mini"
     return m if m and not m.lower().startswith(("gpt", "o1", "o3", "o4", "gemini")) else "claude-sonnet-4-6"
 
@@ -1355,11 +1368,11 @@ def _ai_call(system, user, max_tokens=700, history=None):
         if not key: raise RuntimeError("Gemini AI not configured")
         contents = [{"role": "model" if m["role"] == "assistant" else "user", "parts": [{"text": m["content"]}]} for m in msgs]
         # Google answers 503/429 when a model is busy. Try your model, retry once, then fall back to steadier models.
-        chain = [ai_model()] + [x.strip() for x in os.getenv("GEMINI_FALLBACKS", "gemini-3.8-flash,gemini-3.8-flash-lite").split(",") if x.strip()]
+        chain = [ai_model()] + [x.strip() for x in os.getenv("GEMINI_FALLBACKS", "gemini-2.5-flash,gemini-2.5-flash-lite").split(",") if x.strip()]
         chain = list(dict.fromkeys(chain)); last = None
         for i, model in enumerate(chain):
             cfg_ = {"maxOutputTokens": max_tokens}
-            if "3.8-flash" in model: cfg_["thinkingConfig"] = {"thinkingBudget": 0}   # otherwise hidden thinking eats the answer budget
+            if "2.5-flash" in model: cfg_["thinkingConfig"] = {"thinkingBudget": 0}   # otherwise hidden thinking eats the answer budget
             for attempt in range(2 if i == 0 else 1):
                 r = requests.post(f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent", timeout=30,
                     headers={"x-goog-api-key": key, "Content-Type": "application/json"},
@@ -1385,11 +1398,11 @@ def ai_status():
 
 def platform_facts():
     docs = Clinician.query.filter_by(status="approved").all()
-    lines = [f"- {c.user.name} ({c.specialty}; treats {c.conditions or 'skin conditions'}; speaks {c.language}; video visit {tier_price(c, 'video')} ETB, video + chat {tier_price(c, 'video_chat')} ETB)" for c in docs[:10]]
-    return ("Tena Medicare is a skin-health (dermatology) telemedicine service in Ethiopia. Currency is Ethiopian birr (ETB). "
+    lines = [f"- {c.user.name} ({c.specialty}; treats {c.conditions or 'skin conditions'}; speaks {c.language}; chat {tier_price(c, 'chat')} ETB, video + chat {tier_price(c, 'video_chat')} ETB)" for c in docs[:10]]
+    return ("Dr Feysal Tena Medicine is a skin-health (dermatology) telemedicine service in Ethiopia. Currency is Ethiopian birr (ETB). "
             "Patients create an account, find a doctor, read the doctor's profile, choose a time, describe what is going on and can attach up to 4 photos, then pick a plan and pay with Chapa. "
-            "Plan 1 'Video visit': one 30-minute private video consultation. "
-            f"Plan 2 'Video + chat': the video visit plus secure messaging with the same doctor, including photos, for {cfg('chat_days')} days after the visit, which is best for follow-ups and checking progress. "
+            f"Plan 1 'Chat with a doctor' ({tier_price(None, 'chat')} ETB): secure messaging with the chosen doctor, including photos, for {cfg('chat_days')} days, with no appointment time needed. "
+            f"Plan 2 'Video consultation + chat' ({tier_price(None, 'video_chat')} ETB): one 30-minute private video consultation at a chosen time, plus the same secure messaging for {cfg('chat_days')} days after it, which is best for follow-ups. Prices are the same for every doctor. "
             "Both plans include prescriptions when the doctor decides one is needed. "
             "A doctor can have many patients and a patient can see more than one doctor. "
             f"A chosen time is held for {cfg('hold_minutes')} minutes while the patient pays, then released. "
@@ -1424,7 +1437,7 @@ def ai_assistant():
     if EMERGENCY.search(q) or any(EMERGENCY.search(str(m.get("content", ""))) for m in hist if m.get("role") == "user"):
         return jsonify(answer="This may be an emergency. Call 907 (ambulance in Ethiopia) or go to the nearest hospital now. This service cannot help in an emergency.", emergency=True)
     if cfg("ai_assistant") != "1": return jsonify(error="The assistant is switched off. Booking works as normal."), 503
-    sysmsg = ("You are the skin-care assistant for Tena Medicare, a dermatology telemedicine service in Ethiopia. Reply in the language the user writes in (Amharic or English). "
+    sysmsg = ("You are the skin-care assistant for Dr Feysal Tena Medicine, a dermatology telemedicine service in Ethiopia. Reply in the language the user writes in (Amharic or English). "
               "You may: (1) give general, widely accepted skin-care education such as sunscreen use, gentle cleansing, moisturising, patch-testing new products, not picking or squeezing spots, "
               "what common skin terms mean, and how to take clear photos of a skin problem (daylight, steady, one close-up and one from further away, no filters); "
               "(2) help the person choose a doctor and a plan using ONLY these facts: " + platform_facts() + " "

@@ -3,14 +3,14 @@ import { ArrowLeft, Camera, Clock3, Lock, MessageCircle, Send, X } from 'lucide-
 import { request, store, prepareImage, dateTime, timeAgo, timeLabel, dayLabel, dayKey } from './lib.js';
 import { Avatar, AuthImg, EmptyState, Lightbox } from './ui.jsx';
 
-/* Messages for both patient and doctor. One thread per patient-doctor pair; open only while a paid Video + chat visit is in its window. */
+/* Messages for both patient and doctor. One thread per patient-doctor pair; open only while a paid chat plan is in its window. */
 export default function Messages({ user, activeId, go, flash, refreshUnread }) {
   const [convs, setConvs] = useState(null);
   const loadList = useCallback(() => request('/api/conversations').then(d => { setConvs(d); refreshUnread && refreshUnread(d.reduce((n, c) => n + c.unread, 0)); }).catch(e => flash(e.message, 'error')), [flash, refreshUnread]);
   useEffect(() => { loadList(); const t = setInterval(() => { if (!document.hidden) loadList(); }, 15000); return () => clearInterval(t); }, [loadList]);
   const current = convs?.find(c => String(c.id) === String(activeId));
   const isDoctor = user.role === 'clinician';
-  if (convs && !convs.length) return <EmptyState icon={MessageCircle} title="No conversations yet" text={isDoctor ? 'When a patient books your Video + chat plan and pays, a conversation opens here.' : 'Chat comes with the Video + chat plan. Book a visit with that plan and you can message your doctor and send photos for 30 days.'} action={isDoctor ? undefined : () => go('find-a-doctor')} actionText="Find a doctor" />;
+  if (convs && !convs.length) return <EmptyState icon={MessageCircle} title="No conversations yet" text={isDoctor ? 'When a patient pays for a chat plan with you, a conversation opens here.' : 'Chat comes with both plans. Choose Chat with a doctor, or a video consultation with chat, and you can message your doctor and send photos for 30 days.'} action={isDoctor ? undefined : () => go('find-a-doctor')} actionText="Find a doctor" />;
   return <div className={`messages-layout ${current ? 'has-thread' : ''}`}>
     <aside className="conv-list" aria-label="Conversations">{(convs || []).map(c => <button key={c.id} className={`conv-item ${String(c.id) === String(activeId) ? 'on' : ''}`} onClick={() => go(`messages/${c.id}`)}>
       <Avatar name={c.other_name} url={c.other_photo} size={44} /><span className="conv-text"><strong>{c.other_name}</strong><small>{c.last || (c.chat_open ? 'Say hello' : 'Chat closed')}</small></span><span className="conv-meta">{c.last_at && <small>{timeAgo(c.last_at)}</small>}{c.unread > 0 && <b className="badge">{c.unread}</b>}{!c.chat_open && <Lock size={13} />}</span></button>)}</aside>
@@ -55,6 +55,6 @@ function Thread({ conv, user, back, flash, onChange }) {
         <textarea rows={1} value={text} maxLength={2000} placeholder="Write a message…" onChange={e => setText(e.target.value)} onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } }} />
         <button className="btn btn-primary icon-send" disabled={sending || (!text.trim() && !photo)} aria-label="Send"><Send size={17} /></button></div>
       <small className="compose-note">Photos are private to you and your {user.role === 'patient' ? 'doctor' : 'patient'}. Not for emergencies: call 907.</small></form>
-      : <div className="thread-closed"><Lock size={16} /> {user.role === 'patient' ? 'This chat is closed. Book another Video + chat visit to message this doctor again. Your earlier messages stay here.' : 'The chat window for this patient has closed.'}</div>}
+      : <div className="thread-closed"><Lock size={16} /> {user.role === 'patient' ? 'This chat is closed. Choose a plan with chat to message this doctor again. Your earlier messages stay here.' : 'The chat window for this patient has closed.'}</div>}
     <Lightbox src={light} onClose={() => setLight(null)} /></>;
 }

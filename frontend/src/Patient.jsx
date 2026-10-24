@@ -14,30 +14,30 @@ export function FindDoctor({ doctors, go }) {
     <div className="section-head"><div><h2>Find your skin doctor</h2><p>Every doctor here has been checked and approved. Open a profile to see what they treat and book a time.</p></div><div className="searchbox"><Search size={17} /><input placeholder="Search a condition, name or language" value={q} onChange={e => setQ(e.target.value)} aria-label="Search doctors" /></div></div>
     {!!conditions.length && <div className="chip-row filters"><button className={`chip ${!cond ? 'on' : ''}`} onClick={() => setCond('')}>All</button>{conditions.map(c => <button key={c} className={`chip ${cond === c ? 'on' : ''}`} onClick={() => setCond(cond === c ? '' : c)}>{c}</button>)}</div>}
     <div className="doctor-grid">{shown.map(d => <DoctorCard key={d.id} d={d} onOpen={() => go(`doctor/${d.id}`)} />)}</div>
-    {doctors && !shown.length && <EmptyState icon={Users} title="No doctors match that" text="Try another word, or clear the filter. New doctors join after the Tena Medicare team approves them." action={() => { setQ(''); setCond(''); }} actionText="Clear filters" />}
+    {doctors && !shown.length && <EmptyState icon={Users} title="No doctors match that" text="Try another word, or clear the filter. New doctors join after the Tena Medicine team approves them." action={() => { setQ(''); setCond(''); }} actionText="Clear filters" />}
   </div>;
 }
 
 /* ---------- One doctor: profile + booking ---------- */
 const PLANS = [
-  { id: 'video', title: 'Video visit', icon: Video, blurb: 'One private 30-minute video consultation.', bullets: ['Your message and photos reach the doctor first', 'Prescription if your doctor decides you need one'] },
-  { id: 'video_chat', title: 'Video + chat', icon: MessageCircle, blurb: 'The visit, plus messaging with this doctor for 30 days.', bullets: ['Everything in Video visit', 'Send progress photos and ask follow-up questions', 'Best for follow-ups and ongoing conditions'], flag: 'Best for follow-ups' },
+  { id: 'chat', title: 'Chat with a doctor', icon: MessageCircle, blurb: 'Message this doctor and send photos. No appointment time needed.', bullets: ['Your message and photos reach the doctor first', 'Chat stays open for 30 days', 'Prescription if your doctor decides you need one'] },
+  { id: 'video_chat', title: 'Video consultation and chat', icon: Video, blurb: 'A private 30-minute video visit, plus chat for 30 days after it.', bullets: ['Everything in Chat with a doctor', 'A live video visit at a time you pick', 'Best for new or worrying skin problems'], flag: 'Most complete' },
 ];
 export function DoctorProfilePage({ id, user, consented, acceptConsent, go, flash, afterBooking }) {
   const [d, setD] = useState(null); const [slots, setSlots] = useState(null); const [err, setErr] = useState('');
   const draftKey = `tena_draft_book_${id}`; const saved = store.get(draftKey, {});
-  const [day, setDay] = useState(''); const [slot, setSlot] = useState(''); const [tier, setTier] = useState(saved.tier || 'video'); const [reason, setReason] = useState(saved.reason || ''); const [files, setFiles] = useState([]); const [busy, setBusy] = useState(false);
+  const [day, setDay] = useState(''); const [slot, setSlot] = useState(''); const [tier, setTier] = useState((['chat', 'video_chat'].includes(saved.tier) ? saved.tier : 'chat')); const [reason, setReason] = useState(saved.reason || ''); const [files, setFiles] = useState([]); const [busy, setBusy] = useState(false);
   useEffect(() => { setD(null); setErr(''); request(`/api/clinicians/${id}`).then(setD).catch(e => setErr(e.message)); request(`/api/clinicians/${id}/slots`).then(s => { setSlots(s); setDay(dayKey(s[0]?.starts_at)); }).catch(() => setSlots([])); }, [id]);
   useEffect(() => { store.set(draftKey, { tier, reason }); }, [tier, reason, draftKey]);   // the message to the doctor is kept if you leave and come back
   const days = useMemo(() => { const m = new Map(); (slots || []).forEach(s => { const k = dayKey(s.starts_at); if (!m.has(k)) m.set(k, []); m.get(k).push(s); }); return m; }, [slots]);
   if (err) return <EmptyState icon={AlertCircle} title="This doctor is not available" text={err} action={() => go('find-a-doctor')} actionText="Back to doctors" />;
   if (!d) return <div className="panel"><p className="muted">Loading profile…</p></div>;
-  const price = tier === 'video_chat' ? d.fee_chat_etb : d.fee_video_etb;
+  const needsTime = tier === 'video_chat'; const price = tier === 'chat' ? d.price_chat : d.price_video_chat;
   const book = async e => {
     e.preventDefault();
     if (!consented) return flash('Please accept the privacy notice before booking.', 'error');
     setBusy(true); let ap;
-    try { ap = await request('/api/appointments', { method: 'POST', body: JSON.stringify({ slot_id: Number(slot), reason, tier }) }); }
+    try { ap = await request('/api/appointments', { method: 'POST', body: JSON.stringify({ slot_id: needsTime ? Number(slot) : undefined, clinician_id: Number(id), reason, tier }) }); }
     catch (x) { flash(x.message, 'error'); setBusy(false); request(`/api/clinicians/${id}/slots`).then(setSlots).catch(() => {}); return; }
     let failed = 0;
     for (const f of files) { try { const fd = new FormData(); fd.append('photo', f); await request(`/api/appointments/${ap.id}/photos`, { method: 'POST', body: fd }); } catch { failed += 1; } }
@@ -46,33 +46,36 @@ export function DoctorProfilePage({ id, user, consented, acceptConsent, go, flas
     try {
       const pay = await request(`/api/appointments/${ap.id}/pay`, { method: 'POST', body: '{}' });
       if (pay.checkout_url || pay.authorization_url) { window.location.href = pay.checkout_url || pay.authorization_url; return; }
-      await request(`/api/dev/simulate-payment/${ap.id}`, { method: 'POST', body: '{}' }); flash('Booked. (Test payment: no real money moved.)');
+      await request(`/api/dev/simulate-payment/${ap.id}`, { method: 'POST', body: '{}' }); flash('Done. (Test payment: no real money moved.)');
     } catch (x) { flash(x.message + ' Your time is held for a few minutes: finish payment from Appointments.', 'error'); }
     setBusy(false); afterBooking();
   };
   return <div className="profile-layout">
     <section className="profile-main">
       <button className="text-button back-link" onClick={() => go('find-a-doctor')}>← All doctors</button>
-      <div className="profile-hero panel"><Avatar name={d.name} url={d.photo_url} size={132} round={false} /><div><div className="eyebrow">{d.specialty}</div><h2>{d.name}</h2><p className="profile-facts">{d.years_exp ? <span><Stethoscope size={15} /> {d.years_exp} years of experience</span> : null}<span>🗣 {d.language}</span>{d.consultations > 0 && <span><Check size={15} /> {d.consultations} visits completed</span>}</p><span className="verified-line"><ShieldCheck size={15} /> Approved by Tena Medicare</span></div></div>
+      <div className="profile-hero panel"><Avatar name={d.name} url={d.photo_url} size={132} round={false} /><div><div className="eyebrow">{d.specialty}</div><h2>{d.name}</h2><p className="profile-facts">{d.years_exp ? <span><Stethoscope size={15} /> {d.years_exp} years of experience</span> : null}<span>🗣 {d.language}</span>{d.consultations > 0 && <span><Check size={15} /> {d.consultations} visits completed</span>}</p><span className="verified-line"><ShieldCheck size={15} /> Approved by Tena Medicine</span></div></div>
       <div className="panel"><h3>What I do</h3><p className="profile-bio">{d.bio}</p></div>
       <div className="panel"><h3>Conditions I treat</h3><div className="chip-row">{d.conditions.map(c => <span className="chip" key={c}>{c}</span>)}</div></div>
-      <div className="panel soft"><h3>Before you book</h3><ul className="check-list"><li><Check /> Describe what you are going through and add up to 4 photos: daylight, one close-up, one from further away</li><li><Check /> If you need follow-up, choose Video + chat to message this doctor for 30 days</li><li><Check /> For emergencies (spreading rash with fever, swollen face or lips) call 907</li></ul></div>
+      <div className="panel soft"><h3>Before you book</h3><ul className="check-list"><li><Check /> Describe what you are going through and add up to 4 photos: daylight, one close-up, one from further away</li><li><Check /> If you need follow-up, choose a plan with chat to message this doctor for 30 days</li><li><Check /> For emergencies (spreading rash with fever, swollen face or lips) call 907</li></ul></div>
     </section>
     <form className="booking-card panel" onSubmit={book}>
       <h3>Book {d.name.split(' ').slice(0, 2).join(' ')}</h3>
-      <div className="step-label"><b>1</b> Pick a time</div>
+      <div className="step-label"><b>1</b> Choose your plan</div>
+      <div className="plan-pick">{PLANS.map(p => <label key={p.id} className={`plan-option ${tier === p.id ? 'on' : ''}`}><input type="radio" name="tier" checked={tier === p.id} onChange={() => setTier(p.id)} /><span className="po-icon"><p.icon size={18} /></span><span className="po-body"><strong>{p.title} {p.flag && <em>{p.flag}</em>}</strong><small>{p.blurb}</small><ul>{p.bullets.map(b => <li key={b}>{b}</li>)}</ul></span><b className="po-price">{money(p.id === 'chat' ? d.price_chat : d.price_video_chat)}</b></label>)}</div>
+      {needsTime && <>
+      <div className="step-label"><b>2</b> Pick a time for the video visit</div>
       {slots === null ? <p className="muted">Loading times…</p> : !days.size ? <p className="muted">No open times right now. Please check again soon.</p> : <>
         <div className="day-row">{[...days.keys()].map(k => <button type="button" key={k} className={day === k ? 'on' : ''} onClick={() => { setDay(k); setSlot(''); }}>{dayLabel(days.get(k)[0].starts_at)}</button>)}</div>
         <div className="time-row">{(days.get(day) || []).map(s => <button type="button" key={s.id} className={String(s.id) === String(slot) ? 'on' : ''} onClick={() => setSlot(String(s.id))}>{timeLabel(s.starts_at)}</button>)}</div></>}
-      <div className="step-label"><b>2</b> Choose your plan</div>
-      <div className="plan-pick">{PLANS.map(p => <label key={p.id} className={`plan-option ${tier === p.id ? 'on' : ''}`}><input type="radio" name="tier" checked={tier === p.id} onChange={() => setTier(p.id)} /><span className="po-icon"><p.icon size={18} /></span><span className="po-body"><strong>{p.title} {p.flag && <em>{p.flag}</em>}</strong><small>{p.blurb}</small><ul>{p.bullets.map(b => <li key={b}>{b}</li>)}</ul></span><b className="po-price">{money(p.id === 'video_chat' ? d.fee_chat_etb : d.fee_video_etb)}</b></label>)}</div>
-      <div className="step-label"><b>3</b> Tell the doctor what is going on</div>
+      </>}
+      <div className="step-label"><b>{needsTime ? 3 : 2}</b> Tell the doctor what is going on</div>
       <label className="plain">Your message<textarea rows={4} maxLength={500} value={reason} onChange={e => setReason(e.target.value)} required placeholder="Where is it, when did it start, does it itch or hurt, what have you tried?" /><small className="field-hint">{reason.length}/500 · Saved on this device as you type.</small></label>
       <label className="plain">Photos of the skin concern (up to 4)<PhotoPicker files={files} setFiles={setFiles} max={4} prepare={prepareImage} /></label>
       {!consented && <div className="consent-inline"><ShieldCheck size={18} /><span>Please accept the privacy notice to book.</span><button type="button" className="btn btn-outline btn-sm" onClick={acceptConsent}>Accept</button></div>}
-      <div className="payment-summary"><div className="payment-icon"><Wallet /></div><div><strong>{tier === 'video_chat' ? 'Video + chat' : 'Video visit'}</strong><p>Secure payment with Chapa, in birr</p></div><strong>{money(price)}</strong></div>
-      <button className="btn btn-primary btn-full" disabled={busy || !slot || !consented || !reason.trim()}>{busy ? 'Please wait…' : 'Continue to payment'} <ArrowRight size={17} /></button>
-      <p className="mini-note">Your time is held for a few minutes while you pay.</p>
+      <div className="payment-summary"><div className="payment-icon"><Wallet /></div><div><strong>{PLANS.find(p => p.id === tier).title}</strong><p>Secure payment with Chapa, in birr</p></div><strong>{money(price)}</strong></div>
+      <button className="btn btn-primary btn-full" disabled={busy || (needsTime && !slot) || !consented || !reason.trim()}>{busy ? 'Please wait…' : 'Continue to payment'} <ArrowRight size={17} /></button>
+      {((needsTime && !slot) || !reason.trim() || !consented) && <p className="mini-note need">To continue: {[needsTime && !slot && 'pick a time (step 2)', !reason.trim() && `write a message (step ${needsTime ? 3 : 2})`, !consented && 'accept the privacy notice'].filter(Boolean).join(', ')}.</p>}
+      <p className="mini-note">{needsTime ? 'Your time is held for a few minutes while you pay.' : 'Your chat opens as soon as you pay and stays open for 30 days.'}</p>
     </form>
   </div>;
 }
@@ -88,10 +91,10 @@ export function Appointments({ appointments, user, go, onRoom, onCancel, onPay, 
           {a.status === 'pending_payment' && a.hold_expires_at && <p><HoldTimer iso={a.hold_expires_at} /></p>}
           {a.status === 'cancelled' && a.payment && ['refund_pending', 'refunded'].includes(a.payment) && <p className="muted">Refund {a.payment === 'refunded' ? 'completed' : 'in progress with Chapa'}.</p>}
           {isPatient && a.reason && <p className="appt-reason">“{a.reason}”</p>}
-          <div className="appointment-card-meta"><span><CalendarDays size={15} />{dateTime(a.starts_at)}</span>{isPatient && <span><Wallet size={15} />{money(a.fee_etb)}</span>}{a.photos > 0 && <span><Camera size={15} />{a.photos} photo{a.photos > 1 ? 's' : ''}</span>}{a.tier === 'video_chat' && a.chat_until && a.status !== 'pending_payment' && a.status !== 'cancelled' && <span><MessageCircle size={15} />{a.chat_open ? `Chat open until ${dateTime(a.chat_until)}` : 'Chat closed'}</span>}</div>
+          <div className="appointment-card-meta"><span><CalendarDays size={15} />{a.tier === 'chat' ? `Bought ${dateTime(a.starts_at)}` : dateTime(a.starts_at)}</span>{isPatient && <span><Wallet size={15} />{money(a.fee_etb)}</span>}{a.photos > 0 && <span><Camera size={15} />{a.photos} photo{a.photos > 1 ? 's' : ''}</span>}{a.tier !== 'video' && a.chat_until && a.status !== 'pending_payment' && a.status !== 'cancelled' && <span><MessageCircle size={15} />{a.chat_open ? `Chat open until ${dateTime(a.chat_until)}` : 'Chat closed'}</span>}</div>
           <div className="appointment-card-actions">
             {isPatient && a.status === 'pending_payment' && <button className="btn btn-primary btn-sm" onClick={() => onPay(a.id)}><CreditCard size={15} /> Complete payment</button>}
-            {live && <button className="btn btn-primary btn-sm" disabled={!soon} title="The room opens 10 minutes before the appointment" onClick={() => onRoom(a.id)}><Video size={15} /> {soon ? 'Join consultation' : 'Opens 10 min before'}</button>}
+            {live && a.tier !== 'chat' && <button className="btn btn-primary btn-sm" disabled={!soon} title="The room opens 10 minutes before the appointment" onClick={() => onRoom(a.id)}><Video size={15} /> {soon ? 'Join consultation' : 'Opens 10 min before'}</button>}
             {a.chat_open && a.conversation_id && <button className="btn btn-outline btn-sm" onClick={() => go(`messages/${a.conversation_id}`)}><MessageCircle size={15} /> Open chat</button>}
             {!isPatient && ['confirmed', 'checked_in', 'in_consultation', 'completed'].includes(a.status) && <button className="btn btn-outline btn-sm" onClick={() => onOpenVisit(a.id)}><FileText size={15} /> Open visit</button>}
             {!isPatient && live && <button className="btn btn-outline btn-sm" onClick={() => onNote(a.id)}><FileText size={15} /> Clinical note</button>}
@@ -154,7 +157,7 @@ export function SkinAssistant({ go }) {
 
 /* ---------- Patient overview ---------- */
 export function PatientOverview({ user, appointments, doctors, unread, go, onRoom }) {
-  const upcoming = appointments.filter(a => ['confirmed', 'checked_in', 'in_consultation'].includes(a.status)).sort((a, b) => new Date(a.starts_at) - new Date(b.starts_at));
+  const upcoming = appointments.filter(a => a.tier !== 'chat' && ['confirmed', 'checked_in', 'in_consultation'].includes(a.status)).sort((a, b) => new Date(a.starts_at) - new Date(b.starts_at));
   const waiting = appointments.filter(a => a.status === 'pending_payment');
   const next = upcoming[0];
   const [team, setTeam] = useState([]); const [rxCount, setRx] = useState(0); const [profileDone, setDone] = useState(true);
@@ -165,7 +168,7 @@ export function PatientOverview({ user, appointments, doctors, unread, go, onRoo
     <div className="stat-grid"><Stat icon={CalendarDays} label="Upcoming visits" value={upcoming.length} caption="Confirmed and paid" tone="blue" /><Stat icon={Users} label="My doctors" value={team.length} caption="Your care team" tone="green" /><Stat icon={MessageCircle} label="Unread messages" value={unread} caption="From your doctors" tone="purple" /><Stat icon={Pill} label="Prescriptions" value={rxCount} caption="From all doctors" tone="orange" /></div>
     <div className="dashboard-grid"><div className="panel upcoming-panel"><div className="panel-heading"><div><h2>Next visit</h2><p>Your next video consultation.</p></div><button className="text-button" onClick={() => go('appointments')}>All appointments <ArrowRight size={15} /></button></div>
       {next ? <div className="next-visit"><Avatar name={next.clinician} url={next.photo_url} size={56} /><div><strong>{next.clinician}</strong><span>{next.specialty} · {dateTime(next.starts_at)}</span><TierChip tier={next.tier} /></div><button className="btn btn-primary btn-sm" disabled={new Date(next.starts_at) - Date.now() > 600000} onClick={() => onRoom(next.id)}><Video size={15} /> {new Date(next.starts_at) - Date.now() > 600000 ? 'Opens 10 min before' : 'Join'}</button></div> : <EmptyState icon={CalendarDays} title="No upcoming visits" text="Choose a doctor and book a time." action={() => go('find-a-doctor')} actionText="Find a doctor" />}</div>
-      <div className="panel quick-panel"><div className="panel-heading"><div><h2>Quick actions</h2></div></div><div className="quick-actions">{[[Search, 'Find a doctor', 'Profiles and fees', 'find-a-doctor'], [MessageCircle, 'Messages', 'Chat and photos', 'messages'], [Pill, 'Prescriptions', 'And visit summaries', 'my-records'], [Sparkles, 'Skin assistant', 'Tips and doctor matching', 'skin-assistant']].map(([Icon, l, sub, to]) => <button className="quick-action" key={l} onClick={() => go(to)}><span className="quick-icon"><Icon size={18} /></span><span><strong>{l}</strong><small>{sub}</small></span><ArrowRight size={16} /></button>)}</div></div></div>
+      <div className="panel quick-panel"><div className="panel-heading"><div><h2>Quick actions</h2></div></div><div className="quick-actions">{[[Search, 'Find a doctor', 'Profiles and open times', 'find-a-doctor'], [MessageCircle, 'Messages', 'Chat and photos', 'messages'], [Pill, 'Prescriptions', 'And visit summaries', 'my-records'], [Sparkles, 'Skin assistant', 'Tips and doctor matching', 'skin-assistant']].map(([Icon, l, sub, to]) => <button className="quick-action" key={l} onClick={() => go(to)}><span className="quick-icon"><Icon size={18} /></span><span><strong>{l}</strong><small>{sub}</small></span><ArrowRight size={16} /></button>)}</div></div></div>
     {!profileDone && <div className="bottom-banner"><div className="bottom-banner-icon"><ShieldCheck /></div><div><strong>Save your skin profile once.</strong><p>Allergies, products and history: your doctors see it for every visit, so you never repeat yourself.</p></div><button className="text-button" onClick={() => go('my-skin-profile')}>Fill it in <ArrowRight size={15} /></button></div>}
   </div>;
 }

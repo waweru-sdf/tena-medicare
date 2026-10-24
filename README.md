@@ -1,5 +1,5 @@
 ---
-title: Tena Medicare
+title: Dr Feysal Tena Medicine
 emoji: 🩺
 colorFrom: blue
 colorTo: blue
@@ -8,7 +8,7 @@ app_port: 7860
 pinned: false
 ---
 
-# Tena Medicare: online dermatology for Ethiopia
+# Dr Feysal · Tena Medicine: online dermatology for Ethiopia
 
 **How it works now**
 
@@ -88,3 +88,6 @@ Public rooms are refused. Choose one in `.env`: self-hosted Jitsi with JWT (`JIT
 git init && git branch -M main && git add . && git status --short   # .env, node_modules, *.db must not appear
 git commit -m "Tena Medicare Ethiopia" && git remote add origin https://github.com/YOU/REPO.git && git push -u origin main
 ```
+
+## Plans and prices
+Two plans: **Chat with a doctor** (messaging and photos for `chat_days`, no appointment time) and **Video consultation + chat** (a 30-minute video visit, then chat). Prices are the same for every doctor and are changed only by the admin under **Settings > Prices** (defaults 800 and 1500 ETB). Doctors no longer set fees. Visits booked on the old video-only plan keep working but cannot be bought any more.

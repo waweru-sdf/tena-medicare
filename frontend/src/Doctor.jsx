@@ -7,7 +7,7 @@ import { PrescriptionForm } from './Extra.jsx';
 const CONDITION_IDEAS = ['Acne', 'Eczema', 'Psoriasis', 'Rosacea', 'Pigmentation', 'Melasma', 'Hair loss', 'Dandruff', 'Fungal infections', 'Scabies', 'Warts', 'Moles', 'Scars', 'Nail problems', 'Baby eczema', 'Allergic rashes'];
 const STATUS_COPY = {
   draft: ['Finish your profile', 'Patients cannot see you yet. Complete the checklist, then submit your profile for approval.', 'amber'],
-  pending: ['Waiting for admin approval', 'The Tena Medicare team is reviewing your profile and licence. You will be notified, and you can keep editing meanwhile.', 'amber'],
+  pending: ['Waiting for admin approval', 'The Tena Medicine team is reviewing your profile and licence. You will be notified, and you can keep editing meanwhile.', 'amber'],
   rejected: ['Changes needed', 'Your profile was not approved yet. Read the reason below, fix it and submit again.', 'red'],
   approved: ['Approved: you are live', 'Patients can find you and book the times you publish.', 'green'],
 };
@@ -22,13 +22,13 @@ export function ProfileEditor({ flash, onChanged }) {
   const addCond = c => { const cur = p.conditions.split(',').map(x => x.trim()).filter(Boolean); if (!cur.includes(c)) setP({ ...p, conditions: [...cur, c].join(', ') }); };
   const save = async () => {
     setBusy(true);
-    try { const d = await request('/api/clinician/profile', { method: 'PUT', body: JSON.stringify({ specialty: p.specialty, language: p.language, bio: p.bio, conditions: p.conditions, years_exp: p.years_exp ?? '', fee_etb: p.fee_etb, fee_chat_etb: p.fee_chat_etb ?? '', reg_number: p.reg_number }) }); setP(d); onChanged(); flash(d.status === 'pending' && p.status === 'approved' ? 'Saved. Changing your licence number sends your profile back for review.' : 'Profile saved.'); return d; }
+    try { const d = await request('/api/clinician/profile', { method: 'PUT', body: JSON.stringify({ specialty: p.specialty, language: p.language, bio: p.bio, conditions: p.conditions, years_exp: p.years_exp ?? '', reg_number: p.reg_number }) }); setP(d); onChanged(); flash(d.status === 'pending' && p.status === 'approved' ? 'Saved. Changing your licence number sends your profile back for review.' : 'Profile saved.'); return d; }
     catch (e) { flash(e.message, 'error'); return null; } finally { setBusy(false); }
   };
   const submit = async () => { const d = await save(); if (!d) return; try { setP(await request('/api/clinician/profile/submit', { method: 'POST', body: '{}' })); onChanged(); flash('Submitted. The admin team will review your profile.'); } catch (e) { flash(e.message, 'error'); } };
   const upload = async e => { const f = e.target.files?.[0]; e.target.value = ''; if (!f) return; setBusy(true); try { const fd = new FormData(); fd.append('photo', await prepareImage(f, 900)); const d = await request('/api/clinician/photo', { method: 'POST', body: fd }); setP({ ...p, photo_url: d.photo_url + '?v=' + Date.now(), missing: d.missing }); onChanged(); flash('Photo saved.'); } catch (x) { flash(x.message, 'error'); } finally { setBusy(false); } };
   const [title, text, tone] = STATUS_COPY[p.status] || STATUS_COPY.draft;
-  const preview = { name: p.name, specialty: p.specialty, bio: p.bio, language: p.language, years_exp: p.years_exp, photo_url: p.photo_url, conditions: p.conditions.split(',').map(x => x.trim()).filter(Boolean), fee_video_etb: p.fee_etb };
+  const preview = { name: p.name, specialty: p.specialty, bio: p.bio, language: p.language, years_exp: p.years_exp, photo_url: p.photo_url, conditions: p.conditions.split(',').map(x => x.trim()).filter(Boolean), price_chat: p.price_chat };
   return <div className="section-stack">
     <div className={`approval-banner ${tone}`}>{p.status === 'approved' ? <ShieldCheck size={22} /> : <AlertCircle size={22} />}<div><strong>{title}</strong><p>{text}</p>{p.status === 'rejected' && p.review_reason && <p className="review-reason">Reason: {p.review_reason}</p>}</div></div>
     <div className="two-column">
@@ -40,8 +40,7 @@ export function ProfileEditor({ flash, onChanged }) {
           <label>What you do (shown on your profile)<textarea rows={5} maxLength={2000} value={p.bio} onChange={set('bio')} placeholder="Describe your work, the people you help most and how you like to work with patients." /><small className="field-hint">{p.bio.length}/2000 · at least 40 characters</small></label>
           <label>Conditions you treat (comma separated)<input value={p.conditions} onChange={set('conditions')} placeholder="Acne, Eczema, Psoriasis" /></label>
           <div className="chip-row">{CONDITION_IDEAS.map(c => <button type="button" key={c} className="chip" onClick={() => addCond(c)}>+ {c}</button>)}</div>
-          <div className="form-grid"><label>Video visit fee (ETB)<input type="number" min="1" value={p.fee_etb ?? ''} onChange={set('fee_etb')} required /></label><label>Video + chat fee (ETB)<input type="number" min="1" value={p.fee_chat_etb ?? ''} onChange={set('fee_chat_etb')} placeholder={`Blank = ${money(p.fee_chat_effective)}`} /></label></div>
-          <small className="field-hint">The chat plan is the video visit plus 30 days of messaging, so price it higher than the video visit.</small>
+          <div className="price-note"><b>Prices are set by Tena Medicine.</b> Every doctor charges the same: chat with a doctor {money(p.price_chat)}, video consultation + chat {money(p.price_video_chat)}.</div>
           <label>Medical registration (licence) number<input value={p.reg_number || ''} onChange={set('reg_number')} required /></label>
           <div className="button-row"><button className="btn btn-primary" disabled={busy}>Save profile</button>
             {['draft', 'rejected'].includes(p.status) && <button type="button" className="btn btn-outline" disabled={busy} onClick={submit}>Save and submit for approval <ArrowRight size={15} /></button>}</div></form></div>
@@ -117,7 +116,7 @@ function PatientPage({ id, go, flash, onNote }) {
 /* ---------- Doctor overview ---------- */
 export function DoctorOverview({ user, appointments, unread, go, onRoom }) {
   const status = user.doctor_status || 'draft'; const [title, text, tone] = STATUS_COPY[status] || STATUS_COPY.draft;
-  const upcoming = appointments.filter(a => ['confirmed', 'checked_in', 'in_consultation'].includes(a.status)).sort((a, b) => new Date(a.starts_at) - new Date(b.starts_at));
+  const upcoming = appointments.filter(a => a.tier !== 'chat' && ['confirmed', 'checked_in', 'in_consultation'].includes(a.status)).sort((a, b) => new Date(a.starts_at) - new Date(b.starts_at));
   const [patients, setPatients] = useState([]);
   useEffect(() => { if (status === 'approved') request('/api/clinician/patients').then(setPatients).catch(() => {}); }, [status]);
   return <div className="section-stack">

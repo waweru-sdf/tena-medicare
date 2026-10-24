@@ -23,7 +23,7 @@ const NAV = {
 };
 const TITLES = {
   doctor: ['Doctor profile', ''],
-  'find-a-doctor': ['Find your skin doctor', 'Approved dermatologists, with profiles, fees and open times.'], appointments: ['Appointments', 'Visits, payments and video rooms.'], messages: ['Messages', 'Chat and photos with your doctors.'],
+  'find-a-doctor': ['Find your skin doctor', 'Approved dermatologists, with profiles and open times.'], appointments: ['Appointments', 'Visits, payments and video rooms.'], messages: ['Messages', 'Chat and photos with your doctors.'],
   'my-doctors': ['My doctors', 'Your care team.'], 'my-records': ['My records', 'Prescriptions and visit summaries.'], 'my-skin-profile': ['My skin profile', 'Saved once, shared with the doctors you book.'], 'skin-assistant': ['Skin assistant', 'General tips and doctor matching.'],
   'my-profile': ['My profile', 'What patients see, and your approval status.'], availability: ['Availability', 'Publish the times patients can book.'], 'my-patients': ['My patients', 'Everyone you are caring for.'], 'clinical-notes': ['Clinical notes', 'Document a visit and sign it.'], assistant: ['Doctor’s assistant', 'Drafts that you review.'],
   support: ['Support', 'Help with your account, booking or payment.'], doctors: ['Doctors', 'Review profiles and approve who patients can see.'], reports: ['Reports', 'Service performance and finance.'], settings: ['Settings', 'Chat window, AI, policy and staff.'],
@@ -146,13 +146,13 @@ function App() {
   }
   if (!content && page === 'support') content = ['patient', 'clinician'].includes(user.role) ? <SupportDesk flash={flash} /> : <TicketQueue flash={flash} />;
 
-  const brand = <div className="brand"><span className="brand-mark"><HeartPulse size={21} /></span><span>Tena<span className="brand-light">Medicare</span><small>SKIN HEALTH, ONLINE</small></span><button className="icon-btn mobile-close" onClick={() => setMobileNav(false)} aria-label="Close menu"><X size={18} /></button></div>;
+  const brand = <div className="brand"><span className="brand-mark"><HeartPulse size={21} /></span><span className="brand-text"><b>Dr Feysal</b><small>Tena Medicine</small></span><button className="icon-btn mobile-close" onClick={() => setMobileNav(false)} aria-label="Close menu"><X size={18} /></button></div>;
   return <div className="app-shell">
     <aside className={`sidebar ${mobileNav ? 'open' : ''}`}>{brand}<div className="workspace-label">{isPatient ? 'MY SKIN CARE' : isDoctor ? 'MY PRACTICE' : 'WORKSPACE'}</div>
       <nav>{navItems.map(({ label, slug: s, Icon }) => <button key={s} className={`nav-item ${page === s || (s === 'find-a-doctor' && page === 'doctor') ? 'active' : ''}`} onClick={() => { go(s); setMobileNav(false); }}><Icon size={18} /><span>{label}</span>{badge(s) && <b className="nav-badge">{badge(s)}</b>}</button>)}</nav>
       <div className="sidebar-bottom"><div className="help-card"><div className="help-icon"><ShieldCheck size={18} /></div><strong>Private by design</strong><p>Photos and messages are encrypted and shared only with your doctor.</p><button onClick={() => go('support')}>Visit help centre <ArrowRight size={14} /></button></div><button className="nav-item" onClick={logout}><LogOut size={18} /><span>Sign out</span></button></div></aside>
     {mobileNav && <button className="mobile-scrim" onClick={() => setMobileNav(false)} aria-label="Close menu" />}
-    <main className="main-area"><header className="topbar"><button className="icon-btn mobile-menu" onClick={() => setMobileNav(true)} aria-label="Open menu"><Menu /></button><div className="breadcrumb">Tena Medicare <span>/</span> <b>{title === greet ? 'Overview' : title}</b></div>
+    <main className="main-area"><header className="topbar"><button className="icon-btn mobile-menu" onClick={() => setMobileNav(true)} aria-label="Open menu"><Menu /></button><div className="breadcrumb">Tena Medicine <span>/</span> <b>{title === greet ? 'Overview' : title}</b></div>
       <div className="top-actions"><span className="country-chip"><span className="ethiopia-dot" /> Ethiopia · ETB</span><button className="icon-btn bell" title="Messages" aria-label="Messages" onClick={() => ['patient', 'clinician'].includes(user.role) && (approvedDoc || isPatient) ? go('messages') : flash('You are all caught up.', 'info')}><Bell size={18} />{unread > 0 && <i className="bell-dot" />}</button>
         <div className="user-chip"><Avatar name={user.name} url={user.photo_url} size={36} /><div><strong>{user.name}</strong><small>{isDoctor ? `doctor · ${user.doctor_status}` : user.role}</small></div><ChevronDown size={15} /></div></div></header>
       <section className="page-content">

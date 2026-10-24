@@ -31,9 +31,14 @@ def patient():
 
 def visit(pc, pt, cid, tier="video", pay=True):
     """Book and (in the local test mode) pay for a visit. Returns the appointment id."""
-    r = pc.post("/api/appointments", headers=hdr(pt), json={"slot_id": add_slot(cid), "reason": "itchy patches", "tier": tier})
+    legacy = tier == "video"   # the old video-only plan can no longer be bought; keep one such visit to prove old records still work
+    body = {"reason": "itchy patches", "tier": "video_chat" if legacy else tier, "clinician_id": cid}
+    if tier != "chat": body["slot_id"] = add_slot(cid)
+    r = pc.post("/api/appointments", headers=hdr(pt), json=body)
     assert r.status_code == 200, r.get_data(as_text=True)
     aid = r.get_json()["id"]
+    if legacy:
+        with A.app.app_context(): A.db.session.get(A.Appointment, aid).tier = "video"; A.db.session.commit()
     if pay:
         assert pc.post(f"/api/appointments/{aid}/pay", headers=hdr(pt)).status_code == 200
         assert pc.post(f"/api/dev/simulate-payment/{aid}", headers=hdr(pt)).status_code == 200
@@ -48,7 +53,7 @@ def test_new_doctor_starts_as_draft_cannot_submit_until_profile_is_complete():
     p = c.get("/api/clinician/profile", headers=hdr(t)).get_json()
     assert p["status"] == "draft" and p["missing"]
     r = c.post("/api/clinician/profile/submit", headers=hdr(t)); assert r.status_code == 400 and r.get_json()["missing"]
-    c.put("/api/clinician/profile", headers=hdr(t), json={"bio": "x" * 50, "conditions": "Acne, Eczema", "fee_etb": 900, "reg_number": "ET-123"})
+    c.put("/api/clinician/profile", headers=hdr(t), json={"bio": "x" * 50, "conditions": "Acne, Eczema", "reg_number": "ET-123"})
     assert c.post("/api/clinician/photo", headers=hdr(t), data=png(), content_type="multipart/form-data").status_code == 200
     assert c.post("/api/clinician/profile/submit", headers=hdr(t)).get_json()["status"] == "pending"
 
@@ -67,7 +72,7 @@ def admin_login():
 
 def test_admin_approves_and_rejects_with_reason_and_doctor_can_resubmit():
     c, t = make_user("clinician")
-    c.put("/api/clinician/profile", headers=hdr(t), json={"bio": "y" * 50, "conditions": "Acne", "fee_etb": 900, "reg_number": "ET-9"})
+    c.put("/api/clinician/profile", headers=hdr(t), json={"bio": "y" * 50, "conditions": "Acne", "reg_number": "ET-9"})
     c.post("/api/clinician/photo", headers=hdr(t), data=png(), content_type="multipart/form-data"); c.post("/api/clinician/profile/submit", headers=hdr(t))
     ac, at = admin_login()
     cid = c.get("/api/auth/me", headers=hdr(t)).get_json()["user"]["clinician_id"]
@@ -90,28 +95,68 @@ def test_changing_the_licence_number_sends_an_approved_doctor_back_for_review():
     assert dc.get("/api/clinician/profile", headers=hdr(dtok)).get_json()["status"] == "pending"
 
 # ---------------- tiers and prices
-def test_tier_prices_follow_the_doctor_and_default_to_one_and_a_half_times():
-    dc, dtok, cid = doctor(fee=1000, chat=None); pc, pt = patient()
+def admin_login():
+    with A.app.app_context():
+        if not A.User.query.filter_by(email="boss@example.com").first():
+            A.db.session.add(A.User(email="boss@example.com", name="Boss", role="admin", password_hash=A.generate_password_hash("password123"))); A.db.session.commit()
+    c = A.app.test_client(); return c, c.post("/api/auth/login", json={"email": "boss@example.com", "password": "password123"}).get_json()["token"]
+
+def set_prices(client, token, **kw):
+    return client.put("/api/admin/config", headers=hdr(token), json=kw)
+
+def test_prices_are_global_and_only_the_admin_changes_them():
+    dc, dtok, cid = doctor(); pc, pt = patient(); ac, at = admin_login()
+    set_prices(ac, at, price_chat=800, price_video_chat=1500)
+    base = pc.get("/api/prices").get_json(); assert base["currency"] == "ETB" and base["chat"] < base["video_chat"]
     card = pc.get(f"/api/clinicians/{cid}", headers=hdr(pt)).get_json()
-    assert card["fee_video_etb"] == 1000 and card["fee_chat_etb"] == 1500
-    a1 = visit(pc, pt, cid, "video", pay=False); a2 = visit(pc, pt, cid, "video_chat", pay=False)
+    assert card["price_chat"] == base["chat"] and card["price_video_chat"] == base["video_chat"]
+    assert "fee_etb" not in card
+    assert set_prices(dc, dtok, price_chat=1).status_code in (401, 403)              # a doctor cannot
+    assert set_prices(pc, pt, price_chat=1).status_code in (401, 403)                # nor a patient
+    dc.put("/api/clinician/profile", headers=hdr(dtok), json={"fee_etb": 99999, "fee_chat_etb": 99999})   # doctor-sent fees are ignored
+    assert set_prices(ac, at, price_chat=900, price_video_chat=2300).status_code == 200
+    card = pc.get(f"/api/clinicians/{cid}", headers=hdr(pt)).get_json()
+    assert (card["price_chat"], card["price_video_chat"]) == (900, 2300)
+    a1 = visit(pc, pt, cid, "chat", pay=False); a2 = visit(pc, pt, cid, "video_chat", pay=False)
     got = {a["id"]: a for a in pc.get("/api/appointments", headers=hdr(pt)).get_json()}
-    assert got[a1]["fee_etb"] == 1000 and got[a2]["fee_etb"] == 1500
-    with A.app.app_context(): assert A.Payment.query.count() >= 0
+    assert got[a1]["fee_etb"] == 900 and got[a2]["fee_etb"] == 2300
     pc.post(f"/api/appointments/{a2}/pay", headers=hdr(pt))
-    with A.app.app_context(): assert A.Payment.query.filter_by(appointment_id=a2).first().amount_kes == 1500
+    with A.app.app_context(): assert A.Payment.query.filter_by(appointment_id=a2).first().amount_kes == 2300
 
-def test_unknown_tier_is_refused_and_does_not_hold_the_slot():
+def test_admin_price_must_be_a_positive_whole_number():
+    ac, at = admin_login()
+    for bad in (0, -5, "abc", 10.5): assert set_prices(ac, at, price_chat=bad).status_code == 400
+
+def test_old_or_unknown_tiers_cannot_be_booked():
     dc, dtok, cid = doctor(); pc, pt = patient(); sid = add_slot(cid)
-    assert pc.post("/api/appointments", headers=hdr(pt), json={"slot_id": sid, "tier": "platinum"}).status_code == 400
-    assert pc.post("/api/appointments", headers=hdr(pt), json={"slot_id": sid, "tier": "video"}).status_code == 200
+    for tier in ("platinum", "video"):
+        assert pc.post("/api/appointments", headers=hdr(pt), json={"slot_id": sid, "tier": tier}).status_code == 400
+    assert pc.post("/api/appointments", headers=hdr(pt), json={"slot_id": sid, "tier": "video_chat"}).status_code == 200
 
-def test_doctor_cannot_set_chat_price_below_video_price():
-    dc, dtok, cid = doctor(fee=1000)
-    assert dc.put("/api/clinician/profile", headers=hdr(dtok), json={"fee_chat_etb": 500}).status_code == 400
+def test_chat_only_plan_needs_no_time_opens_chat_after_payment_and_has_no_video_room():
+    dc, dtok, cid = doctor(); pc, pt = patient()
+    aid = visit(pc, pt, cid, "chat", pay=False)
+    assert pc.get("/api/conversations", headers=hdr(pt)).get_json() == []            # unpaid: no chat yet
+    assert pc.post(f"/api/appointments/{aid}/pay", headers=hdr(pt)).status_code == 200
+    assert pc.post(f"/api/dev/simulate-payment/{aid}", headers=hdr(pt)).status_code == 200
+    rows = pc.get("/api/conversations", headers=hdr(pt)).get_json(); assert len(rows) == 1 and rows[0]["chat_open"] is True
+    a = [x for x in pc.get("/api/appointments", headers=hdr(pt)).get_json() if x["id"] == aid][0]
+    assert a["tier"] == "chat" and a["status"] == "confirmed" and a["chat_open"] and a["chat_until"]
+    assert pc.get(f"/api/appointments/{aid}/room", headers=hdr(pt)).status_code == 400
+    assert pc.post(f"/api/appointments/{aid}/cancel", headers=hdr(pt)).status_code == 400
+    # the placeholder never shows up as a bookable or listed time
+    assert pc.get(f"/api/clinicians/{cid}/slots", headers=hdr(pt)).get_json() == []
+    assert dc.get("/api/clinician/slots", headers=hdr(dtok)).get_json() == []
+
+def test_unpaid_chat_plan_expires_without_leaving_a_bookable_slot():
+    dc, dtok, cid = doctor(); pc, pt = patient(); aid = visit(pc, pt, cid, "chat", pay=False)
+    with A.app.app_context():
+        ap = A.db.session.get(A.Appointment, aid); ap.slot.hold_expires_at = dt.datetime.utcnow() - dt.timedelta(minutes=1); A.db.session.commit()
+    assert [x for x in pc.get("/api/appointments", headers=hdr(pt)).get_json() if x["id"] == aid][0]["status"] == "expired"
+    assert pc.get(f"/api/clinicians/{cid}/slots", headers=hdr(pt)).get_json() == []
 
 # ---------------- chat is a tier-2 feature
-def test_video_only_patient_has_no_chat_and_chat_opens_after_tier_two_is_paid():
+def test_legacy_video_only_visit_has_no_chat_and_chat_opens_after_a_chat_plan_is_paid():
     dc, dtok, cid = doctor(); pc, pt = patient()
     visit(pc, pt, cid, "video")
     assert pc.get("/api/conversations", headers=hdr(pt)).get_json() == []
@@ -280,3 +325,19 @@ def test_appointment_list_links_the_chat_thread_for_tier_two():
     dc, dtok, cid = doctor(); pc, pt = patient(); a = visit(pc, pt, cid, "video_chat"); b = visit(pc, pt, cid, "video")
     got = {x["id"]: x for x in pc.get("/api/appointments", headers=hdr(pt)).get_json()}
     assert got[a]["conversation_id"] and got[b]["conversation_id"] is None
+
+def test_gemini_falls_back_to_a_steadier_model_when_the_first_is_busy(monkeypatch):
+    monkeypatch.setattr(A, "AI_PROVIDER", "gemini"); monkeypatch.setenv("GEMINI_API_KEY", "k"); monkeypatch.setenv("AI_MODEL", "gemini-3.8-flash"); monkeypatch.setattr(A.time, "sleep", lambda s: None)
+    seen = []
+    def fake(url, **kw):
+        seen.append(url.split("/models/")[1].split(":")[0])
+        if "3.8" in url: return Reply({"error": {"message": "high demand"}}, 503)
+        return Reply({"candidates": [{"content": {"parts": [{"text": "hello"}]}}]})
+    monkeypatch.setattr(A.requests, "post", fake)
+    assert A._ai_call("sys", "hi") == "hello"
+    assert seen == ["gemini-3.8-flash", "gemini-3.8-flash", "gemini-2.5-flash"]
+
+def test_gemini_reports_the_error_when_every_model_is_busy(monkeypatch):
+    monkeypatch.setattr(A, "AI_PROVIDER", "gemini"); monkeypatch.setenv("GEMINI_API_KEY", "k"); monkeypatch.setattr(A.time, "sleep", lambda s: None)
+    monkeypatch.setattr(A.requests, "post", lambda url, **kw: Reply({"error": {"message": "high demand"}}, 503))
+    with pytest.raises(RuntimeError, match="503"): A._ai_call("sys", "hi")

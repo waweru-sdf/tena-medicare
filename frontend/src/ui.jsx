@@ -37,15 +37,16 @@ export function EmptyState({ icon: Icon, title, text, action, actionText }) {
   return <div className="empty-state"><div className="empty-icon"><Icon size={25} /></div><h3>{title}</h3><p>{text}</p>{action && <button className="btn btn-primary btn-sm" onClick={action}>{actionText || 'Continue'} <ArrowRight size={15} /></button>}</div>;
 }
 
-export const TierChip = ({ tier }) => <span className={`tier-chip ${tier === 'video_chat' ? 'plus' : ''}`}>{tier === 'video_chat' ? 'Video + chat' : 'Video visit'}</span>;
+export const TIER_NAMES = { chat: 'Chat with a doctor', video_chat: 'Video consultation + chat', video: 'Video visit' };
+export const TierChip = ({ tier }) => <span className={`tier-chip ${tier === 'video_chat' ? 'plus' : ''}`}>{TIER_NAMES[tier] || 'Visit'}</span>;
 
 export function DoctorCard({ d, onOpen, preview }) {
   return <article className={`doctor-card pro ${preview ? 'is-preview' : ''}`}>
-    <div className="pro-top"><Avatar name={d.name} url={d.photo_url} size={72} round={false} /><div className="pro-id"><h3>{d.name || 'Your name'}</h3><p>{d.specialty || 'Dermatology'}</p><span className="verified-line"><ShieldCheck size={14} /> {preview ? 'Shown after approval' : 'Approved by Tena Medicare'}</span></div></div>
+    <div className="pro-top"><Avatar name={d.name} url={d.photo_url} size={72} round={false} /><div className="pro-id"><h3>{d.name || 'Your name'}</h3><p>{d.specialty || 'Dermatology'}</p><span className="verified-line"><ShieldCheck size={14} /> {preview ? 'Shown after approval' : 'Approved by Tena Medicine'}</span></div></div>
     {d.bio && <p className="pro-bio">{d.bio.length > 150 ? d.bio.slice(0, 150) + '…' : d.bio}</p>}
     {!!(d.conditions || []).length && <div className="chip-row">{d.conditions.slice(0, 5).map(c => <span className="chip" key={c}>{c}</span>)}</div>}
     <div className="doctor-meta"><span><Languages size={14} /> {d.language || 'English'}</span>{d.years_exp ? <span><Stethoscope size={14} /> {d.years_exp} yrs</span> : null}{d.open_slots != null && <span className={d.open_slots ? 'ok' : ''}>{d.open_slots ? `${d.open_slots} open times` : 'No open times'}</span>}</div>
-    <div className="doctor-footer"><span><small>From</small> <strong>{money(d.fee_video_etb ?? d.fee_etb)}</strong></span>{onOpen && <button className="btn btn-primary btn-sm" onClick={onOpen}>View profile <ArrowRight size={15} /></button>}</div>
+    <div className="doctor-footer"><span><small>From</small> <strong>{money(d.price_chat)}</strong></span>{onOpen && <button className="btn btn-primary btn-sm" onClick={onOpen}>View profile <ArrowRight size={15} /></button>}</div>
   </article>;
 }
 

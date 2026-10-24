@@ -24,7 +24,8 @@ def booked(fee=250, days=2, minutes=0):
     dc, dtok = make_user("clinician")
     with A.app.app_context():
         user = A.User.query.filter_by(role="clinician").order_by(A.User.id.desc()).first()
-        c = A.Clinician.query.filter_by(user_id=user.id).first(); c.status = "approved"; c.fee_kes = fee
+        c = A.Clinician.query.filter_by(user_id=user.id).first(); c.status = "approved"
+        row = A.db.session.get(A.Config, "price_video_chat") or A.Config(key="price_video_chat"); row.value = str(fee); A.db.session.add(row)
         slot = A.Slot(clinician_id=c.id, starts_at=dt.datetime.utcnow() + dt.timedelta(days=days, minutes=minutes, seconds=next(counter)))
         A.db.session.add(slot); A.db.session.commit(); sid = slot.id
     r = pc.post("/api/appointments", headers=hdr(pt), json={"slot_id": sid, "reason": "test"})
