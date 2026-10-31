@@ -1,0 +1,58 @@
+# Dr. Feysel Tena Medicine: website + backend front door.
+# Real files (the website, pictures, fonts) are served as they are. Everything else goes to index.php (Laravel).
+Options -Indexes -MultiViews
+DirectoryIndex index.php index.html
+
+<IfModule mod_rewrite.c>
+RewriteEngine On
+
+# Always use https
+RewriteCond %{HTTPS} off
+RewriteCond %{HTTP:X-Forwarded-Proto} !https
+RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
+
+# The home page file is just the home page
+RewriteCond %{THE_REQUEST} \s/index\.html[\s?]
+RewriteRule ^index\.html$ / [R=301,L]
+
+# Real files and folders are served as they are
+RewriteCond %{REQUEST_FILENAME} -f [OR]
+RewriteCond %{REQUEST_FILENAME} -d
+RewriteRule ^ - [L]
+
+# Every other address is handled by Laravel: /api/... and each page of the website
+RewriteRule ^ index.php [L]
+</IfModule>
+
+# Never show hidden, backup, database or environment files
+<FilesMatch "^\.(?!well-known)|\.(bak|sql|log|env|ini|lock|md|dist)$|^(composer\.(json|lock)|artisan)$">
+  Require all denied
+</FilesMatch>
+
+<IfModule mod_headers.c>
+Header always set X-Content-Type-Options "nosniff"
+Header always set Referrer-Policy "strict-origin-when-cross-origin"
+Header always set X-Frame-Options "SAMEORIGIN"
+Header always set Strict-Transport-Security "max-age=31536000"
+Header always set Permissions-Policy "geolocation=()"
+<FilesMatch "\.(woff2?|svg|css|js|jpe?g|png|webp)$">
+  Header set Cache-Control "public, max-age=2592000"
+</FilesMatch>
+<FilesMatch "(index\.html|manifest\.json)$">
+  Header set Cache-Control "no-cache"
+</FilesMatch>
+</IfModule>
+
+<IfModule mod_deflate.c>
+AddOutputFilterByType DEFLATE text/html text/css application/javascript application/json image/svg+xml text/plain application/xml
+</IfModule>
+
+# Photos: allow big enough uploads (the website shrinks them before sending)
+<IfModule mod_php.c>
+php_value upload_max_filesize 8M
+php_value post_max_size 10M
+</IfModule>
+<IfModule LiteSpeed>
+php_value upload_max_filesize 8M
+php_value post_max_size 10M
+</IfModule>
